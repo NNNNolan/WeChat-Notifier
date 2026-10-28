@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using Microsoft.UI.Dispatching;
+using WeChat_Notifier.Domain;
 using WeChat_Notifier.Configuration;
 using WeChat_Notifier.Infrastructure.Logging;
 using WeChat_Notifier.Infrastructure.Windows.Interop;
@@ -9,15 +11,34 @@ namespace WeChat_Notifier.Infrastructure.Windows;
 internal sealed class TrayIcon : IDisposable
 {
     private readonly NativeWindow _window = new("WeChatNotifier.Tray");
-    private readonly nint _icon = IconLoader.LoadTrayIcon();
+    private nint _icon;
+    private readonly nint _blankIcon;
+    private readonly DispatcherQueueTimer _flashTimer;
+    private int _flashSteps;
+    private bool _iconVisible = true;
+    private NotificationMode _mode = NotificationMode.Normal;
+    private int _unreadCount;
+    private bool _disposed;
     private readonly uint _taskbarCreated = Native.RegisterWindowMessage("TaskbarCreated");
     private bool _added;
     private string _state = "等待微信";
     public event Action? SettingsRequested, TogglePauseRequested, TestRequested, ReloadRequested, ExitRequested;
+    public event Action? WeChatRequested;
+    public event Action? SystemResumed;
+    public event Action<NotificationMode>? ModeRequested;
     public bool Paused { get; private set; }
+    internal bool IsFlashing => _flashTimer.IsRunning;
+    internal int UnreadCount => _unreadCount;
+    internal NotificationMode Mode => _mode;
+    internal string ModeMenuLabel => $"模式（当前：{_mode.DisplayName()}）";
 
-    public TrayIcon()
+    public TrayIcon(DispatcherQueue dispatcher)
     {
+        _icon = IconLoader.CreateTrayIcon(_mode, _unreadCount);
+        _blankIcon = IconLoader.CreateBlankIcon();
+        _flashTimer = dispatcher.CreateTimer();
+        _flashTimer.Interval = TimeSpan.FromMilliseconds(300);
+        _flashTimer.Tick += (_, _) => FlashTick();
         _window.MessageHandler = OnMessage;
         Add();
     }
@@ -26,8 +47,8 @@ internal sealed class TrayIcon : IDisposable
     {
         cbSize = Marshal.SizeOf<Native.NOTIFYICONDATA>(), hWnd = _window.Handle,
         uID = 1, uFlags = Native.NIF_MESSAGE | Native.NIF_ICON | Native.NIF_TIP,
-        uCallbackMessage = Native.WM_TRAYICON, hIcon = _icon,
-        szTip = "WeChat-Notifier — " + (Paused ? "已暂停" : _state),
+        uCallbackMessage = Native.WM_TRAYICON, hIcon = _iconVisible ? _icon : _blankIcon,
+        szTip = $"微信通知 · {_mode.DisplayName()} · 新消息 {_unreadCount} — " + (Paused ? "已暂停" : _state),
         szInfo = "", szInfoTitle = ""
     };
 
@@ -49,9 +70,53 @@ internal sealed class TrayIcon : IDisposable
     }
 
     public void SetPaused(bool paused) { Paused = paused; Update(); }
+    public void SetMode(NotificationMode mode)
+    {
+        if (_mode == mode) return;
+        _mode = mode;
+        if (mode == NotificationMode.Silent) { _flashTimer.Stop(); _iconVisible = true; }
+        ReplaceIcon();
+    }
+
+    public void SetUnreadCount(int count)
+    {
+        count = Math.Max(0, count);
+        if (_unreadCount == count) return;
+        _unreadCount = count;
+        if (count == 0) { _flashTimer.Stop(); _iconVisible = true; }
+        ReplaceIcon();
+    }
+
+    public void Flash()
+    {
+        _flashSteps = 8;
+        _iconVisible = false;
+        Update();
+        _flashTimer.Start();
+    }
+
+    private void FlashTick()
+    {
+        if (--_flashSteps <= 0)
+        {
+            _iconVisible = true;
+            _flashTimer.Stop();
+        }
+        else _iconVisible = !_iconVisible;
+        Update();
+    }
+
+    private void ReplaceIcon()
+    {
+        var next = IconLoader.CreateTrayIcon(_mode, _unreadCount);
+        var old = _icon;
+        _icon = next;
+        Update();
+        Native.DestroyIcon(old);
+    }
     private void Update()
     {
-        if (!_added) return;
+        if (!_added || _disposed) return;
         var data = Data();
         if (!Native.Shell_NotifyIcon(Native.NIM_MODIFY, ref data))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "更新托盘状态失败。");
@@ -59,47 +124,87 @@ internal sealed class TrayIcon : IDisposable
 
     private nint? OnMessage(uint message, nint wParam, nint lParam)
     {
+        if (message == 0x0218 && wParam is 0x0007 or 0x0012)
+        {
+            SystemResumed?.Invoke();
+            return 1;
+        }
         if (message == _taskbarCreated && _taskbarCreated != 0) { _added = false; Add(); return 0; }
         if (message != Native.WM_TRAYICON) return null;
         var gesture = (int)((long)lParam & 0xffff);
-        if (gesture is Native.WM_LBUTTONDBLCLK or 0x0400) SettingsRequested?.Invoke();
+        if (gesture == Native.WM_LBUTTONDBLCLK) WeChatRequested?.Invoke();
         else if (gesture is Native.WM_RBUTTONUP or 0x007B) ShowMenu();
         return 0;
     }
 
     private void ShowMenu()
     {
-        var menu = Native.CreatePopupMenu();
-        if (menu == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+        var menu = CreateMenu();
         try
         {
-            void Item(int id, string label) { if (!Native.AppendMenu(menu, Native.MF_STRING, id, label)) throw new Win32Exception(Marshal.GetLastWin32Error()); }
-            Item(1, "设置…"); Item(2, Paused ? "恢复通知" : "暂停通知"); Item(3, "发送测试通知");
-            Native.AppendMenu(menu, Native.MF_SEPARATOR, 0, null!);
-            Item(4, "重新加载配置"); Item(5, "打开配置文件"); Item(6, "打开日志目录");
-            Native.AppendMenu(menu, Native.MF_SEPARATOR, 0, null!);
-            Item(7, "退出");
             if (!Native.GetCursorPos(out var point)) throw new Win32Exception(Marshal.GetLastWin32Error());
             Native.SetForegroundWindow(_window.Handle);
             var command = Native.TrackPopupMenuEx(menu, Native.TPM_RETURNCMD | Native.TPM_NONOTIFY | Native.TPM_RIGHTBUTTON,
                 point.X, point.Y, _window.Handle, 0);
             Native.PostMessage(_window.Handle, Native.WM_NULL, 0, 0);
-            switch (command)
-            {
-                case 1: SettingsRequested?.Invoke(); break;
-                case 2: TogglePauseRequested?.Invoke(); break;
-                case 3: TestRequested?.Invoke(); break;
-                case 4: ReloadRequested?.Invoke(); break;
-                case 5: ShellOpen.File(AppPaths.ConfigFile); break;
-                case 6: ShellOpen.Folder(AppPaths.LogDirectory); break;
-                case 7: ExitRequested?.Invoke(); break;
-            }
+            ExecuteCommand(command);
         }
         finally { Native.DestroyMenu(menu); }
     }
 
+    // 调用方拥有根菜单；DestroyMenu 同时释放已挂接的二级菜单。
+    internal nint CreateMenu()
+    {
+        var menu = Native.CreatePopupMenu();
+        if (menu == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+        nint modes = 0;
+        try
+        {
+            void Item(int id, string label) { if (!Native.AppendMenu(menu, Native.MF_STRING, id, label)) throw new Win32Exception(Marshal.GetLastWin32Error()); }
+            Item(1, "设置…");
+            modes = Native.CreatePopupMenu();
+            if (modes == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+            foreach (var mode in Enum.GetValues<NotificationMode>())
+                if (!Native.AppendMenu(modes, Native.MF_STRING | (mode == _mode ? Native.MF_CHECKED : 0),
+                    10 + (int)mode, mode.DisplayName())) throw new Win32Exception(Marshal.GetLastWin32Error());
+            if (!Native.AppendMenu(menu, Native.MF_POPUP, modes, ModeMenuLabel))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            modes = 0;
+            Item(2, Paused ? "恢复通知" : "暂停通知"); Item(3, "发送测试通知");
+            Native.AppendMenu(menu, Native.MF_SEPARATOR, 0, null!);
+            Item(4, "重新加载配置"); Item(5, "打开配置文件"); Item(6, "打开日志目录");
+            Native.AppendMenu(menu, Native.MF_SEPARATOR, 0, null!);
+            Item(7, "退出");
+            return menu;
+        }
+        catch
+        {
+            if (modes != 0) Native.DestroyMenu(modes);
+            Native.DestroyMenu(menu);
+            throw;
+        }
+    }
+
+    internal void ExecuteCommand(int command)
+    {
+        switch (command)
+        {
+            case 1: SettingsRequested?.Invoke(); break;
+            case 2: TogglePauseRequested?.Invoke(); break;
+            case 3: TestRequested?.Invoke(); break;
+            case 4: ReloadRequested?.Invoke(); break;
+            case 5: ShellOpen.File(AppPaths.ConfigFile); break;
+            case 6: ShellOpen.Folder(AppPaths.LogDirectory); break;
+            case 7: ExitRequested?.Invoke(); break;
+            case >= 10 and <= 12: ModeRequested?.Invoke((NotificationMode)(command - 10)); break;
+        }
+    }
+
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+        _flashTimer.Stop();
         if (_added)
         {
             var data = Data();
@@ -109,5 +214,6 @@ internal sealed class TrayIcon : IDisposable
         }
         _window.Dispose();
         Native.DestroyIcon(_icon);
+        Native.DestroyIcon(_blankIcon);
     }
 }

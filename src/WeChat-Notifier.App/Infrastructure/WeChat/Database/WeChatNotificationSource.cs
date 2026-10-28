@@ -1,15 +1,20 @@
 using WeChat_Notifier.Configuration;
 using WeChat_Notifier.Domain;
 using WeChat_Notifier.Infrastructure.Logging;
+using WeChat_Notifier.Infrastructure.WeChat;
 
 namespace WeChat_Notifier.Infrastructure.WeChat.Database;
 
-/// <summary>Reads local session snapshots on a background thread; events run on that thread.</summary>
+/// <summary>文件事件触发后台读取，闲置只核对提交头；所有对外事件在读取线程执行。</summary>
 public sealed class WeChatNotificationSource : IDisposable
 {
     private const int ErrorRetryDelayMs = 3000;
     private readonly AppConfig _cfg;
     private readonly CancellationTokenSource _stop = new();
+    private readonly object _monitorGate = new();
+    private readonly Func<bool> _isRunning;
+    private readonly Func<WeChatDatabase> _openDatabase;
+    private DatabaseChangeMonitor? _changes;
     private readonly Dictionary<string, (int Unread, long Time, string Summary, string Sender)> _previous =
         new(StringComparer.Ordinal);
     private static readonly HashSet<string> IgnoredUsers = new(StringComparer.OrdinalIgnoreCase)
@@ -26,6 +31,7 @@ public sealed class WeChatNotificationSource : IDisposable
     private Thread? _thread;
     private volatile bool _paused;
     private int _resync = 1;
+    private int _reconnect;
     private bool _connected;
     private int _disposed;
 
@@ -35,7 +41,15 @@ public sealed class WeChatNotificationSource : IDisposable
     public event Action<string>? Diagnostic;
     public bool IsPaused => _paused;
 
-    public WeChatNotificationSource(AppConfig cfg) => _cfg = cfg;
+    public WeChatNotificationSource(AppConfig cfg) : this(cfg, WeChatWindow.IsRunning) { }
+    internal WeChatNotificationSource(AppConfig cfg, Func<bool> isRunning)
+        : this(cfg, isRunning, () => WeChatDatabase.Open(msg => Log.Debug("wechat: " + msg))) { }
+    internal WeChatNotificationSource(AppConfig cfg, Func<bool> isRunning, Func<WeChatDatabase> openDatabase)
+    {
+        _cfg = cfg;
+        _isRunning = isRunning;
+        _openDatabase = openDatabase;
+    }
 
     public void Start()
     {
@@ -53,39 +67,118 @@ public sealed class WeChatNotificationSource : IDisposable
     }
 
     /// <summary>Rebuilds the baseline after config changes or resume, without replay.</summary>
-    public void Nudge() => Interlocked.Exchange(ref _resync, 1);
+    public void Nudge()
+    {
+        Interlocked.Exchange(ref _resync, 1);
+        Wake();
+    }
+
+    internal void RefreshConnection()
+    {
+        Interlocked.Exchange(ref _reconnect, 1);
+        Nudge();
+    }
+
+    private void Wake()
+    {
+        lock (_monitorGate) _changes?.RequestCheck(immediate: true);
+    }
 
     private void Run()
     {
         WeChatDatabase? db = null;
+        string? busyDiagnostic = null;
+        long previousCheck = Environment.TickCount64;
+        void Detach()
+        {
+            lock (_monitorGate) { _changes?.Dispose(); _changes = null; }
+            db?.Dispose();
+            db = null;
+            _previous.Clear();
+            Interlocked.Exchange(ref _resync, 1);
+        }
+        void Watch()
+        {
+            lock (_monitorGate)
+            {
+                _changes?.Dispose();
+                _changes = new DatabaseChangeMonitor(db!.DatabasePaths);
+            }
+        }
         try
         {
             while (!_stop.IsCancellationRequested)
             {
-                var delay = Math.Clamp(_cfg.PollIntervalMs, 150, 10000);
                 try
                 {
-                    db ??= WeChatDatabase.Open(msg => Log.Debug("wechat: " + msg));
-                    ProcessSessions(db.GetSessions());
+                    if (Interlocked.Exchange(ref _reconnect, 0) != 0) Detach();
+                    if (!_isRunning())
+                    {
+                        Detach();
+                        SetConnected(false);
+                        if (_stop.Token.WaitHandle.WaitOne(ErrorRetryDelayMs)) break;
+                        continue;
+                    }
+                    if (db == null)
+                    {
+                        db = _openDatabase();
+                        Watch();
+                    }
+                    var now = Environment.TickCount64;
+                    if (now - previousCheck > Math.Max(15000, _cfg.PollIntervalMs * 3L))
+                    {
+                        // 睡眠/长时间挂起后只建新基线，不能把旧未读批量补弹。
+                        Nudge();
+                        if (db.AccountSelectionChanged()) { Detach(); continue; }
+                    }
+                    previousCheck = now;
+                    var read = db.ReadChanges(force: Volatile.Read(ref _resync) != 0);
+                    if (read != null)
+                    {
+                        if (read.RebuildBaseline) Nudge();
+                        ProcessSessions(read.Sessions);
+                    }
+                    if (busyDiagnostic != null) { busyDiagnostic = null; Raise(Diagnostic, ""); }
                     SetConnected(true);
+                    var wake = _changes!.WaitForCheck(_stop.Token, Math.Clamp(_cfg.PollIntervalMs, 150, 10000));
+                    if (wake == null) break;
+                    if (wake.Value.Error != null)
+                    {
+                        Log.Error("微信数据库文件监听失效，将重建监听与基线", wake.Value.Error);
+                        Raise(Diagnostic, "数据库文件监听失效：" + wake.Value.Error.Message);
+                        Watch();
+                        Nudge();
+                    }
+                    if (wake.Value.Periodic && db.AccountSelectionChanged())
+                    {
+                        Log.Info("wechat account selection changed; reconnecting without replay");
+                        Detach();
+                    }
+                }
+                catch (DatabaseBusyException ex)
+                {
+                    // 并发提交属于短时重试，不能清掉已读去重状态或把错误当「无消息」。
+                    if (busyDiagnostic != ex.Message)
+                    {
+                        busyDiagnostic = ex.Message;
+                        Log.Warn("wechat snapshot busy: " + ex.Message);
+                        Raise(Diagnostic, ex.Message);
+                    }
+                    if (_stop.Token.WaitHandle.WaitOne(DatabaseChangeMonitor.DebounceMs)) break;
                 }
                 catch (Exception ex)
                 {
-                    Log.Warn($"wechat: {ex.GetType().Name}: {ex.Message} -- retrying in {ErrorRetryDelayMs} ms");
+                    Log.Error($"微信数据库监听失败，{ErrorRetryDelayMs} ms 后重新连接", ex);
                     Raise(Diagnostic, ex.Message);
                     SetConnected(false);
-                    db?.Dispose();
-                    db = null;
-                    _previous.Clear();
-                    Nudge();
-                    delay = ErrorRetryDelayMs;
+                    Detach();
+                    if (_stop.Token.WaitHandle.WaitOne(ErrorRetryDelayMs)) break;
                 }
-                if (_stop.Token.WaitHandle.WaitOne(delay)) break;
             }
         }
         finally
         {
-            db?.Dispose();
+            Detach();
             _stop.Dispose();
             Log.Info("wechat notification source stopped");
         }
@@ -132,7 +225,8 @@ public sealed class WeChatNotificationSource : IDisposable
                     ? DateTimeOffset.FromUnixTimeSeconds(s.LastTimestamp).ToLocalTime().ToString("HH:mm")
                     : DateTime.Now.ToString("HH:mm"),
                 Muted = s.Muted,
-                Unread = s.Unread
+                Unread = s.Unread,
+                NewMessageCount = Math.Max(1, s.Unread - (had ? old.Unread : 0))
             });
         }
     }
@@ -170,11 +264,7 @@ public sealed class WeChatNotificationSource : IDisposable
         Raise(ConnectionChanged, connected ? "connected" : "waiting");
     }
 
-    private static void Raise<T>(Action<T>? handler, T value)
-    {
-        try { handler?.Invoke(value); }
-        catch (Exception ex) { Log.Warn("wechat subscriber failed: " + ex.Message); }
-    }
+    private static void Raise<T>(Action<T>? handler, T value) => handler?.Invoke(value);
 
     public void Dispose()
     {

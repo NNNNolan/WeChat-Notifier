@@ -68,6 +68,7 @@ public static partial class Native
 
     // ---- menus ----
     public const uint MF_STRING = 0x00000000;
+    public const uint MF_POPUP = 0x00000010;
     public const uint MF_SEPARATOR = 0x00000800;
     public const uint MF_CHECKED = 0x00000008;
     public const uint MF_UNCHECKED = 0x00000000;
@@ -93,6 +94,8 @@ public static partial class Native
     public const uint SHGFI_USEFILEATTRIBUTES = 0x000000010;
 
     public const int FILE_ATTRIBUTE_NORMAL = 0x80;
+    public const int ERROR_INSUFFICIENT_BUFFER = 122;
+    public const int APPMODEL_ERROR_NO_PACKAGE = 15700;
 
     // ---- SHQueryUserNotificationState ----
     public enum QUERY_USER_NOTIFICATION_STATE
@@ -287,6 +290,15 @@ public static partial class Native
     public static extern bool AppendMenu(IntPtr hMenu, uint uFlags, IntPtr uIDNewItem, string lpNewItem);
 
     [DllImport("user32.dll")]
+    public static extern IntPtr GetSubMenu(IntPtr hMenu, int position);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetMenuItemID(IntPtr hMenu, int position);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetMenuState(IntPtr hMenu, uint item, uint flags);
+
+    [DllImport("user32.dll")]
     public static extern int TrackPopupMenuEx(IntPtr hMenu, uint fuFlags, int x, int y,
         IntPtr hwnd, IntPtr lptpm);
 
@@ -347,12 +359,18 @@ public static partial class Native
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetCurrentPackageFamilyName(ref uint packageFamilyNameLength, StringBuilder? packageFamilyName);
+
     /// <summary>
     /// The executable name of a pid without its extension, matching
     /// <see cref="System.Diagnostics.Process.ProcessName"/>. Null when the
     /// process cannot be queried (protected or already gone).
     /// </summary>
     public static string? ProcessNameOf(uint pid)
+        => Path.GetFileNameWithoutExtension(ProcessPathOf(pid));
+
+    internal static string? ProcessPathOf(uint pid)
     {
         var h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
         if (h == IntPtr.Zero) return null;
@@ -361,7 +379,7 @@ public static partial class Native
             var sb = new StringBuilder(512);
             uint size = (uint)sb.Capacity;
             if (!QueryFullProcessImageName(h, 0, sb, ref size)) return null;
-            return System.IO.Path.GetFileNameWithoutExtension(sb.ToString());
+            return sb.ToString();
         }
         finally { CloseHandle(h); }
     }

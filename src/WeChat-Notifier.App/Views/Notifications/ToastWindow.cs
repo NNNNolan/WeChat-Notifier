@@ -17,6 +17,7 @@ internal sealed class ToastWindow : IDisposable
     private readonly NativeWindow _window;
     private readonly DispatcherQueueTimer _life, _motion, _backdrop;
     private readonly bool _pinned;
+    private readonly bool _transient;
     private readonly bool _animations = new UISettings().AnimationsEnabled;
     private byte[] _raw = [], _previous = [], _work = [], _glass = [], _pixels = [];
     private double _scale, _top, _fromTop, _toTop;
@@ -32,11 +33,13 @@ internal sealed class ToastWindow : IDisposable
     public Action<SessionInfo>? ActivateRequested { get; set; }
     public Action<TimeSpan?>? SuppressNotificationsRequested { get; set; }
 
-    public ToastWindow(AppConfig config, SessionInfo session, DispatcherQueue dispatcher, double scale, bool pinned = false)
+    public ToastWindow(AppConfig config, SessionInfo session, DispatcherQueue dispatcher, double scale,
+        bool pinned = false, bool transient = false)
     {
         _config = config;
         Session = session;
         _pinned = pinned;
+        _transient = transient;
         _scale = scale;
         _window = new NativeWindow("WeChat-Notifier 气泡", Native.WS_POPUP,
             Native.WS_EX_LAYERED | Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE);
@@ -152,8 +155,9 @@ internal sealed class ToastWindow : IDisposable
 
     private void ArmLife()
     {
-        if (_pinned || _hovered || _menuOpen || _closing) return;
-        _life.Interval = TimeSpan.FromMilliseconds(_config.DurationMs);
+        if (_pinned || (!_transient && (_hovered || _menuOpen)) || _closing) return;
+        // 1.3 s before the existing 0.2 s close animation keeps mode hints within 1.5 s.
+        _life.Interval = TimeSpan.FromMilliseconds(_transient ? 1300 : _config.DurationMs);
         _life.Start();
     }
 
@@ -240,7 +244,7 @@ internal sealed class ToastWindow : IDisposable
         if (message == Native.WM_MOUSEMOVE && !_hovered)
         {
             _hovered = true;
-            _life.Stop();
+            if (!_transient) _life.Stop();
             var tracking = new Native.TRACKMOUSEEVENT { Size = (uint)Marshal.SizeOf<Native.TRACKMOUSEEVENT>(), Flags = 2, Hwnd = _window.Handle };
             if (!Native.TrackMouseEvent(ref tracking)) throw new Win32Exception(Marshal.GetLastWin32Error());
             Render(force: true);
@@ -250,7 +254,7 @@ internal sealed class ToastWindow : IDisposable
         if (message == Native.WM_MOUSELEAVE)
         {
             _hovered = false;
-            ArmLife();
+            if (!_transient) ArmLife();
             Render(force: true);
             Present(255, 0);
             return 0;
@@ -262,10 +266,14 @@ internal sealed class ToastWindow : IDisposable
             var close = x >= _pad + _width - 34 * _scale && x <= _pad + _width - 8 * _scale
                 && y >= _pad + 8 * _scale && y <= _pad + 34 * _scale;
             if (close) Finish();
-            else { ActivateRequested?.Invoke(Session); if (!_pinned) Finish(); }
+            else
+            {
+                if (!_transient) ActivateRequested?.Invoke(Session);
+                if (!_pinned) Finish();
+            }
             return 0;
         }
-        if (message == Native.WM_RBUTTONUP && !_pinned && !_closing) { ShowMenu(); return 0; }
+        if (message == Native.WM_RBUTTONUP && !_pinned && !_transient && !_closing) { ShowMenu(); return 0; }
         return null;
     }
 

@@ -64,14 +64,19 @@ public static class WeChatDbLocator
         try
         {
             return Directory.EnumerateFiles(Path.Combine(accountDir, "db_storage"),
-                    "*.db", SearchOption.AllDirectories)
-                .Select(File.GetLastWriteTimeUtc)
+                    "session.db", SearchOption.AllDirectories)
+                .Where(path => !path.Contains(Path.DirectorySeparatorChar + "migrate" + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(SessionActivity)
                 .DefaultIfEmpty(DateTime.MinValue)
                 .Max();
         }
         catch (IOException) { return DateTime.MinValue; }
         catch (UnauthorizedAccessException) { return DateTime.MinValue; }
     }
+
+    internal static DateTime SessionActivity(string path) =>
+        new[] { File.GetLastWriteTimeUtc(path), File.GetLastWriteTimeUtc(path + "-wal") }.Max();
 
     private static IEnumerable<string> CandidateRoots()
     {

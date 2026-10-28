@@ -201,6 +201,11 @@ internal static class WeChatChecks
         cfg.SkipOwnMessages = false;
         Read(row with { Username = "official", Official = true, Unread = 5, Summary = "正文更新" });
         CheckCount(4, "include own did not take effect");
+        var batch = row with { Username = "batch", Unread = 2 };
+        Read(batch);
+        Require(messages[^1].NewMessageCount == 2, "new session batch count was lost");
+        Read(batch with { Unread = 5 });
+        Require(messages[^1].NewMessageCount == 3, "unread increase did not preserve batch count");
         return null;
     }
 
@@ -322,7 +327,7 @@ internal static class WeChatChecks
         }
     }
 
-    private static byte[] EncryptPage(byte[] key, byte[] plain, int number)
+    internal static byte[] EncryptPage(byte[] key, byte[] plain, int number)
     {
         var result = new byte[SqlCipherPage.PageSize];
         var iv = RandomNumberGenerator.GetBytes(16);

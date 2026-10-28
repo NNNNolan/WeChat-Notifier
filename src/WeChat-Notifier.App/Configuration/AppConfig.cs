@@ -1,4 +1,5 @@
 using WeChat_Notifier.Infrastructure.Windows;
+using WeChat_Notifier.Domain;
 
 namespace WeChat_Notifier.Configuration;
 
@@ -18,7 +19,14 @@ public sealed class AppConfig
     /// <summary>勾选后显示 Windows 横幅；关闭时显示自定义玻璃气泡，通知中心两种模式都会保留记录。</summary>
     public bool UseWindowsNotifications { get; set; }
     public bool PlaySound { get; set; }
-    public int PollIntervalMs { get; set; } = 600;
+    public string NotificationMode { get; set; } = nameof(Domain.NotificationMode.Normal);
+    public string ModeSwitchHotkey { get; set; } = "Ctrl+Alt+,+.";
+    public bool ModeSwitchHotkeyEnabled { get; set; } = true;
+    public bool NotifyOnAutomaticModeChange { get; set; } = true;
+    public List<string> SilentApplications { get; set; } = new();
+    public List<string> PrivacyApplications { get; set; } = new();
+    /// <summary>文件事件之外的轻量提交头核对间隔；保留旧 JSON 字段名以兼容已有配置。</summary>
+    public int PollIntervalMs { get; set; } = 3000;
     public bool SkipMuted { get; set; } = true;
     public bool SkipOwnMessages { get; set; } = true;
     public bool IncludeOfficialAccounts { get; set; }

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json;
 using WeChat_Notifier.Configuration;
+using WeChat_Notifier.Domain;
 
 namespace WeChat_Notifier.ViewModels;
 
@@ -119,6 +120,7 @@ public sealed partial class SettingsViewModel : INotifyPropertyChanged
     {
         _c.WeChatHotkey = _c.WeChatHotkey.Trim();
         _c.WeChatPath = _c.WeChatPath.Trim();
+        _c.ModeSwitchHotkey = _c.ModeSwitchHotkey.Trim();
 
         ConfigStore.Validate(_c);
     }
@@ -255,6 +257,70 @@ public sealed partial class SettingsViewModel : INotifyPropertyChanged
     {
         get => _c.PlaySound;
         set => Set(_c.PlaySound, value, v => _c.PlaySound = v, nameof(PlaySound));
+    }
+
+    public int NotificationModeIndex
+    {
+        get => (int)NotificationModeParser.Parse(_c.NotificationMode);
+        set => Set(_c.NotificationMode, ((NotificationMode)Math.Clamp(value, 0, 2)).ToString(),
+            v => _c.NotificationMode = v, nameof(NotificationModeIndex));
+    }
+
+    public string ModeSwitchHotkey
+    {
+        get => _c.ModeSwitchHotkey;
+        set => Set(_c.ModeSwitchHotkey, value, v => _c.ModeSwitchHotkey = v, nameof(ModeSwitchHotkey));
+    }
+
+    public bool ModeSwitchHotkeyEnabled
+    {
+        get => _c.ModeSwitchHotkeyEnabled;
+        set => Set(_c.ModeSwitchHotkeyEnabled, value, v => _c.ModeSwitchHotkeyEnabled = v, nameof(ModeSwitchHotkeyEnabled));
+    }
+
+    public bool NotifyOnAutomaticModeChange
+    {
+        get => _c.NotifyOnAutomaticModeChange;
+        set => Set(_c.NotifyOnAutomaticModeChange, value, v => _c.NotifyOnAutomaticModeChange = v, nameof(NotifyOnAutomaticModeChange));
+    }
+
+    public IReadOnlyList<string> SilentApplications => _c.SilentApplications.ToArray();
+    public IReadOnlyList<string> PrivacyApplications => _c.PrivacyApplications.ToArray();
+
+    internal bool AddApplication(string path, bool silent)
+    {
+        var full = ApplicationRules.Normalize(path);
+        var target = silent ? _c.SilentApplications : _c.PrivacyApplications;
+        var other = silent ? _c.PrivacyApplications : _c.SilentApplications;
+        if (ApplicationRules.Contains(target, full)) return false;
+        other.RemoveAll(p => ApplicationRules.Normalize(p).Equals(full, StringComparison.OrdinalIgnoreCase));
+        target.Add(full);
+        Raise(nameof(SilentApplications));
+        Raise(nameof(PrivacyApplications));
+        RefreshDirty();
+        return true;
+    }
+
+    internal bool ContainsInOtherList(string path, bool silent) =>
+        ApplicationRules.Contains(silent ? _c.PrivacyApplications : _c.SilentApplications, path);
+
+    internal void RemoveApplication(string path, bool silent)
+    {
+        (silent ? _c.SilentApplications : _c.PrivacyApplications)
+            .RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase));
+        Raise(silent ? nameof(SilentApplications) : nameof(PrivacyApplications));
+        RefreshDirty();
+    }
+
+    internal void SynchronizeManualMode(string mode)
+    {
+        if (_c.NotificationMode == _original.NotificationMode)
+        {
+            _c.NotificationMode = mode;
+            Raise(nameof(NotificationModeIndex));
+        }
+        _original.NotificationMode = mode;
+        RefreshDirty();
     }
 
     public bool SkipMuted

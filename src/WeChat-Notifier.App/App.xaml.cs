@@ -43,13 +43,24 @@ public partial class App : Microsoft.UI.Xaml.Application
                 Quit(WindowsNotificationProbe.Run(notifications, config));
                 return;
             }
-            var diagnostic = flags.Contains("--smoke-test") || flags.Contains("--shot-settings") || flags.Contains("--ui-smoke");
+            var diagnostic = flags.Contains("--smoke-test") || flags.Contains("--shot-settings") || flags.Contains("--ui-smoke")
+                || flags.Contains("--mode-smoke");
+            if (flags.Contains("--mode-smoke"))
+            {
+                config.ModeSwitchHotkey = "Ctrl+Alt+F24";
+                config.WeChatHotkeyEnabled = false;
+            }
             _instance = new Mutex(true, @"Local\WeChatNotifier.WinUI." + (diagnostic ? Environment.ProcessId : "Main"), out _ownsMutex);
             if (!_ownsMutex) { Quit(); return; }
             _controller = new ApplicationController(config, DispatcherQueue.GetForCurrentThread());
-            _controller.Start();
+            _controller.Start(listenForMessages: !flags.Contains("--mode-smoke"));
             if (!flags.Contains("--background") || flags.Contains("--settings") || flags.Contains("--shot-settings") || flags.Contains("--ui-smoke"))
                 _controller.OpenSettings();
+            if (flags.Contains("--mode-smoke"))
+            {
+                _controller.OpenSettings();
+                _ = RunModeChecksAsync(Path.Combine(AppPaths.LogDirectory, "mode-smoke"));
+            }
             if (flags.Contains("--test")) _controller.ShowTest();
             if (flags.Contains("--shot-settings") || flags.Contains("--ui-smoke"))
             {
@@ -78,6 +89,12 @@ public partial class App : Microsoft.UI.Xaml.Application
             Quit();
         }
         catch (Exception ex) { Log.Error("界面验证失败", ex); Quit(1); }
+    }
+
+    private async Task RunModeChecksAsync(string directory)
+    {
+        try { await ModeRuntimeChecks.RunAsync(_controller!, directory); Quit(); }
+        catch (Exception ex) { Log.Error("模式运行时验证失败", ex); Quit(1); }
     }
 
     internal static void ShowError(string title, Exception error)

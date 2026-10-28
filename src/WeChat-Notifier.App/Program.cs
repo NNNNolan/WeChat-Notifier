@@ -17,6 +17,8 @@ internal static class Program
         Console.OutputEncoding = new System.Text.UTF8Encoding(false);
         try
         {
+            if (args.Contains("--mode-fixture")) { Thread.Sleep(TimeSpan.FromSeconds(60)); return 0; }
+            Log.Initialize();
             System.Globalization.CultureInfo.DefaultThreadCurrentCulture =
                 System.Globalization.CultureInfo.GetCultureInfo("zh-CN");
             System.Globalization.CultureInfo.DefaultThreadCurrentUICulture =
@@ -44,6 +46,10 @@ internal static class Program
                 WeChat_Notifier.Infrastructure.Windows.Interop.Native.MessageBox(0, ex.Message, "WeChat-Notifier 启动失败", 0x10);
             return 1;
         }
-        finally { WeChat_Notifier.Infrastructure.Windows.Interop.GdiPlus.Shutdown(); }
+        finally
+        {
+            WeChat_Notifier.Infrastructure.Windows.Interop.GdiPlus.Shutdown();
+            Log.Close();
+        }
     }
 }

@@ -17,13 +17,16 @@ internal sealed class ApplicationController : IDisposable
 {
     private readonly DispatcherQueue _dispatcher;
     private readonly WeChatStateMonitor _wechat;
+    private readonly ApplicationModeController _mode;
     private readonly WeChatNotificationSource _source;
     private readonly ToastManager _bubbles;
     private readonly WindowsNotificationService _windows = new();
     private readonly NotificationPresenter _notifications;
-    private readonly TrayIcon _tray = new();
+    private readonly TrayIcon _tray;
+    private readonly UnreadNotifications _unread = new();
     private readonly DispatcherQueueTimer _pauseTimer;
     private MainWindow? _settings;
+    private WeChatWindowState _lastWeChatState;
     private bool _disposed;
     public AppConfig Config { get; }
     public GlobalHotkeys Hotkeys { get; }
@@ -35,36 +38,45 @@ internal sealed class ApplicationController : IDisposable
     {
         Config = config;
         _dispatcher = dispatcher;
+        _tray = new TrayIcon(dispatcher);
         _wechat = new WeChatStateMonitor(dispatcher);
-        _source = new WeChatNotificationSource(config);
+        _mode = new ApplicationModeController(config, dispatcher);
+        _source = new WeChatNotificationSource(config, () => _wechat.IsRunning);
         _bubbles = new ToastManager(config, dispatcher);
         Hotkeys = new GlobalHotkeys(config, dispatcher, _wechat);
+        Hotkeys.ModeSwitchRequested += ToggleManualMode;
         _notifications = new NotificationPresenter(config, _bubbles, _windows);
         _pauseTimer = dispatcher.CreateTimer();
         _pauseTimer.IsRepeating = false;
         _pauseTimer.Tick += (_, _) => SetPaused(false);
         _tray.SettingsRequested += OpenSettings;
+        _tray.WeChatRequested += ActivateWeChat;
+        _tray.ModeRequested += SetManualMode;
         _tray.TogglePauseRequested += () => SetPaused(!Paused);
         _tray.TestRequested += ShowTest;
         _tray.ReloadRequested += Reload;
         _tray.ExitRequested += () => ((App)Microsoft.UI.Xaml.Application.Current).Quit();
+        _tray.SystemResumed += _source.RefreshConnection;
         _bubbles.ActivateChat = _ => ActivateWeChat();
         _bubbles.SuppressNotificationsRequested += duration => SetPaused(true, duration);
         _windows.Activated += ActivateWeChat;
-        Hotkeys.Failed += error => App.ShowError("微信热键失败", error);
+        Hotkeys.Failed += error => App.ShowError("全局快捷键失败", error);
         _source.MessageArrived += OnMessage;
         _source.SessionsUpdated += OnSessionsUpdated;
         _source.ConnectionChanged += OnConnectionChanged;
         _source.Diagnostic += OnDiagnostic;
         _wechat.Changed += OnWeChatStateChanged;
+        _mode.Changed += OnModeChanged;
     }
 
-    public void Start()
+    public void Start(bool listenForMessages = true)
     {
-        _notifications.ApplyMode();
+        _mode.Start();
+        _tray.SetMode(_mode.Current);
+        _notifications.ApplyMode(_mode.Current);
         _wechat.Start();
         Hotkeys.Start();
-        _source.Start();
+        if (listenForMessages) _source.Start();
     }
 
     private void OnMessage(SessionInfo session)
@@ -77,15 +89,74 @@ internal sealed class ApplicationController : IDisposable
                 var disposition = NotificationPolicy.Decide(Config, detected, _wechat.Current,
                     Config.SuppressWhenFullscreen && WeChat_Notifier.Infrastructure.Windows.Interop.Native.IsQuietForNotifications());
                 if (disposition == NotificationDisposition.Ignore) return;
-                if (disposition == NotificationDisposition.Silent) _windows.Show(session, Config, suppressDisplay: true);
-                else _notifications.Show(session);
+                _unread.Arrived(session);
+                _tray.SetUnreadCount(_unread.Count);
+                if (_mode.Current != NotificationMode.Silent) _tray.Flash();
+                _notifications.Show(session, _mode.Current, suppressDisplay: disposition == NotificationDisposition.Silent);
             }
             catch (Exception ex) { NotificationError("通知投递失败", ex); }
         });
     }
 
+    private void OnModeChanged(NotificationModeChanged change)
+    {
+        _tray.SetMode(change.Current.Mode);
+        _notifications.ApplyMode(change.Current.Mode);
+        if (change.Reason != ModeChangeReason.Manual
+            && (change.Reason == ModeChangeReason.Settings || Config.NotifyOnAutomaticModeChange))
+        {
+            try
+            {
+                var body = change.Reason == ModeChangeReason.Settings ? $"当前为{change.Current.Mode.DisplayName()}。"
+                    : change.Current.Automatic
+                    ? $"检测到{Path.GetFileName(change.Current.TriggerPath)}启动，进入{change.Current.Mode.DisplayName()}。"
+                    : $"模式应用已退出，恢复{change.Current.Mode.DisplayName()}。";
+                _bubbles.ShowStatus("通知模式已切换", body);
+            }
+            catch (Exception ex) { Log.Error("模式切换通知失败", ex); }
+        }
+        StatusChanged?.Invoke();
+    }
+
+    private void ToggleManualMode() => SetManualMode(NotificationModeParser.Parse(Config.NotificationMode).Next());
+
+    private void SetManualMode(NotificationMode next)
+    {
+        try
+        {
+            var saved = new AppConfig();
+            ConfigStore.CopyInto(Config, saved);
+            saved.NotificationMode = next.ToString();
+            ConfigStore.Save(saved);
+            Config.NotificationMode = saved.NotificationMode;
+            _settings?.SynchronizeManualMode(saved.NotificationMode);
+            _mode.Refresh(ModeChangeReason.Manual);
+            var body = _mode.State.Automatic
+                ? $"手动选择{next.DisplayName()}；{Path.GetFileName(_mode.State.TriggerPath)}运行中，当前保持{_mode.Current.DisplayName()}。"
+                : $"当前为{_mode.Current.DisplayName()}。";
+            _bubbles.ShowStatus("通知模式已切换", body);
+        }
+        catch (Exception ex) { App.ShowError("无法切换通知模式", ex); }
+    }
+
+    internal ApplicationModeController ModeController => _mode;
+    internal ToastManager Bubbles => _bubbles;
+    internal WindowsNotificationService WindowsNotifications => _windows;
+    internal TrayIcon Tray => _tray;
+    internal NotificationPresenter Presenter => _notifications;
+
+    public string ModeText => _mode.Current.DisplayName() + (_mode.State.Automatic
+        ? $"（自动：{Path.GetFileName(_mode.State.TriggerPath)}）" : "");
+
     private void OnWeChatStateChanged()
     {
+        var state = _wechat.Current;
+        if (state == WeChatWindowState.NotRunning || _lastWeChatState == WeChatWindowState.NotRunning)
+            _source.RefreshConnection();
+        else if (Config.SuppressForActiveChat && state != WeChatWindowState.Foreground
+            && _lastWeChatState == WeChatWindowState.Foreground)
+            _source.Nudge();
+        _lastWeChatState = state;
         if (Config.SuppressForActiveChat && _wechat.Current == WeChatWindowState.Foreground)
             _bubbles.ClearAll();
         StatusChanged?.Invoke();
@@ -95,6 +166,7 @@ internal sealed class ApplicationController : IDisposable
 
     private void OnSessionsUpdated(IReadOnlyList<WeChatSession> sessions)
     {
+        Post(() => { _unread.Synchronize(sessions); _tray.SetUnreadCount(_unread.Count); });
         try { _windows.SynchronizeReadSessionsAsync(sessions).GetAwaiter().GetResult(); }
         catch (Exception ex) { Post(() => NotificationError("同步已读通知失败", ex)); }
     }
@@ -117,12 +189,16 @@ internal sealed class ApplicationController : IDisposable
 
     private void OnDiagnostic(string message)
     {
-        if (message.Length == 0) return;
-        Post(() => { ConnectionText = "等待微信：" + message; StatusChanged?.Invoke(); });
+        Post(() =>
+        {
+            ConnectionText = message.Length == 0 ? "已连接微信" : "微信监听：" + message;
+            StatusChanged?.Invoke();
+        });
     }
 
     public void ActivateWeChat()
     {
+        Post(() => { _unread.Acknowledge(); _tray.SetUnreadCount(0); });
         _ = Task.Run(() =>
         {
             try
@@ -135,12 +211,20 @@ internal sealed class ApplicationController : IDisposable
 
     public void ShowTest()
     {
-        try { _notifications.ShowTest(); }
+        try { _notifications.Show(NotificationPresenter.TestSession(), _mode.Current); }
         catch (Exception ex) { App.ShowError("无法显示测试通知", ex); }
     }
 
-    public void Preview(AppConfig working) => _notifications.Preview(working);
-    public void PreviewAppearance(AppConfig working) => _bubbles.ShowPreview(working);
+    public void Preview(AppConfig working) => _notifications.Preview(working, PreviewMode(working));
+    private NotificationMode PreviewMode(AppConfig working) => _mode.State.Automatic
+        ? _mode.Current : NotificationModeParser.Parse(working.NotificationMode);
+    public void PreviewAppearance(AppConfig working)
+    {
+        var mode = PreviewMode(working);
+        if (mode == NotificationMode.Silent) { EndPreview(); return; }
+        var popup = NotificationPresentation.Create(NotificationPresenter.TestSession(), working, mode).Popup!;
+        _bubbles.ShowPreview(working, popup);
+    }
     public void EndPreview() => _bubbles.DismissPreview();
 
     public void OpenSettings()
@@ -165,6 +249,7 @@ internal sealed class ApplicationController : IDisposable
     public void Save(AppConfig working)
     {
         ConfigStore.Validate(working);
+        Hotkeys.ValidateModeHotkey(working);
         _windows.ValidateAvailable();
         var autoStartChanged = working.AutoStart != Config.AutoStart;
         if (autoStartChanged) AutoStart.Set(working.AutoStart);
@@ -197,7 +282,8 @@ internal sealed class ApplicationController : IDisposable
     private void ApplyConfig()
     {
         Log.Verbose = Config.VerboseLog;
-        _notifications.ApplyMode();
+        _mode.Refresh();
+        _notifications.ApplyMode(_mode.Current);
         _bubbles.DismissPreview();
         _bubbles.Relayout();
         Hotkeys.ReRegister();
@@ -234,8 +320,13 @@ internal sealed class ApplicationController : IDisposable
         _settings?.CloseForExit();
         _bubbles.Dispose();
         Hotkeys.Dispose();
+        _tray.WeChatRequested -= ActivateWeChat;
         _tray.Dispose();
         _wechat.Changed -= OnWeChatStateChanged;
+        _mode.Changed -= OnModeChanged;
+        Hotkeys.ModeSwitchRequested -= ToggleManualMode;
+        _tray.ModeRequested -= SetManualMode;
+        _mode.Dispose();
         _wechat.Dispose();
         _windows.Activated -= ActivateWeChat;
         _windows.Dispose();

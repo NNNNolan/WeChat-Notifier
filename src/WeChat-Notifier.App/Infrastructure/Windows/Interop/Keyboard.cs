@@ -89,22 +89,31 @@ public static class Keyboard
     /// window every time. Real hardware never presses a chord on the same
     /// microsecond, and hotkey detection often samples rather than queues.
     /// </summary>
-    public static bool Chord(IReadOnlyList<ushort> modifiers, ushort key, int gapMs = 18)
+    public static bool Chord(IReadOnlyList<ushort> modifiers, ushort key, int gapMs = 18, ushort additionalKey = 0)
     {
-        foreach (var m in modifiers)
-            if (!Send(Key(m, up: false))) return false;
-
-        Thread.Sleep(gapMs);
-        if (!Send(Key(key, up: false))) return false;
-
-        Thread.Sleep(gapMs);
-        if (!Send(Key(key, up: true))) return false;
-
-        Thread.Sleep(gapMs);
-        for (var i = modifiers.Count - 1; i >= 0; i--)
-            if (!Send(Key(modifiers[i], up: true))) return false;
-
-        return true;
+        var keys = new List<ushort>(modifiers) { key };
+        if (additionalKey != 0) keys.Add(additionalKey);
+        var pressed = new List<ushort>();
+        var success = true;
+        try
+        {
+            foreach (var value in keys)
+            {
+                if (!Send(Key(value, up: false))) { success = false; break; }
+                pressed.Add(value);
+                Thread.Sleep(gapMs);
+            }
+        }
+        finally
+        {
+            // 发送失败也必须释放本次已按下的键，避免留下 Ctrl/Alt 卡住的状态。
+            for (var i = pressed.Count - 1; i >= 0; i--)
+            {
+                if (!Send(Key(pressed[i], up: true))) success = false;
+                Thread.Sleep(gapMs);
+            }
+        }
+        return success;
     }
 
     private static bool Send(INPUT input)
@@ -120,7 +129,7 @@ public static class Keyboard
 /// <summary>Parses a hotkey written the way Windows apps display it, e.g. "Ctrl+Alt+W".</summary>
 public static class HotkeyParser
 {
-    public sealed record Parsed(IReadOnlyList<ushort> Modifiers, ushort Key, string Display);
+    public sealed record Parsed(IReadOnlyList<ushort> Modifiers, ushort Key, string Display, ushort AdditionalKey = 0);
 
     public static bool TryParse(string? text, out Parsed parsed)
     {
@@ -133,6 +142,7 @@ public static class HotkeyParser
 
         var modifiers = new List<ushort>();
         ushort key = 0;
+        ushort additionalKey = 0;
         var display = new List<string>();
 
         foreach (var raw in parts)
@@ -146,7 +156,17 @@ public static class HotkeyParser
                 case "win" or "windows" or "meta": modifiers.Add(Keyboard.VK_LWIN); display.Add("Win"); continue;
             }
 
-            if (key != 0) return false;   // more than one non-modifier
+            if (key != 0)
+            {
+                // 仅扩展逗号与句号这组双主键，其他主键仍只能选一个。
+                if (additionalKey != 0 || !((key == 0xBC && p == ".") || (key == 0xBE && p == ","))) return false;
+                var primaryIndex = display.IndexOf(key == 0xBC ? "," : ".");
+                key = 0xBC;
+                additionalKey = 0xBE;
+                display[primaryIndex] = ",";
+                display.Add(".");
+                continue;
+            }
 
             if (p.Length == 1 && p[0] is >= 'a' and <= 'z')
             {
@@ -157,6 +177,11 @@ public static class HotkeyParser
             {
                 key = p[0];
                 display.Add(p[0].ToString());
+            }
+            else if (p is "," or ".")
+            {
+                key = p == "," ? (ushort)0xBC : (ushort)0xBE;
+                display.Add(p);
             }
             else if (p.StartsWith('f') && int.TryParse(p[1..], out var fn) && fn is >= 1 and <= 24)
             {
@@ -171,7 +196,7 @@ public static class HotkeyParser
 
         if (key == 0 || modifiers.Count == 0 || modifiers.Distinct().Count() != modifiers.Count) return false;
 
-        parsed = new Parsed(modifiers, key, string.Join("+", display));
+        parsed = new Parsed(modifiers, key, string.Join("+", display), additionalKey);
         return true;
     }
 }

@@ -14,6 +14,15 @@
             <TextBlock Text="通知规则" Style="{StaticResource SettingsSection}" />
             <Border Style="{StaticResource SettingsCard}">
                 <StackPanel Spacing="16">
+                    <ComboBox Header="默认通知模式" SelectedIndex="{x:Bind ViewModel.NotificationModeIndex, Mode=TwoWay}">
+                        <ComboBoxItem Content="正常模式" />
+                        <ComboBoxItem Content="隐私模式" />
+                        <ComboBoxItem Content="静默模式" />
+                    </ComboBox>
+                    <TextBlock Text="正常模式显示详细通知；隐私模式的气泡和弹窗只显示“收到了一条消息”；静默模式不显示气泡和弹窗，只保留通知中心记录。"
+                               Style="{StaticResource SettingsHint}" />
+                    <ToggleSwitch Header="检测应用自动切换模式时提示"
+                                  IsOn="{x:Bind ViewModel.NotifyOnAutomaticModeChange, Mode=TwoWay}" />
                     <ToggleSwitch x:Name="SkipMutedToggle" Header="跳过消息免打扰的会话"
                                   IsOn="{x:Bind ViewModel.SkipMuted, Mode=TwoWay}" />
                     <ToggleSwitch Header="仅未读数增加时通知" IsOn="{x:Bind ViewModel.SkipOwnMessages, Mode=TwoWay}" />
@@ -27,6 +36,27 @@
                     <ToggleSwitch Header="全屏应用运行时不打扰" IsOn="{x:Bind ViewModel.SuppressWhenFullscreen, Mode=TwoWay}" />
                     <TextBlock Text="全屏和演示期间不显示气泡或横幅，消息仍保存到通知中心。"
                                Style="{StaticResource SettingsHint}" />
+                </StackPanel>
+            </Border>
+            <TextBlock Text="应用程序模式名单" Style="{StaticResource SettingsSection}" />
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="静默名单优先级高于隐私名单。程序启动时自动进入对应模式，退出后恢复默认模式。相同 EXE 只能存在于一个名单。"
+                               Style="{StaticResource SettingsHint}" />
+                    <TextBlock Text="静默名单" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <ListView x:Name="SilentApplicationsList"
+                              ItemsSource="{x:Bind ViewModel.SilentApplications, Mode=OneWay}" Height="88" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="添加静默程序" Click="OnAddSilentApplication" />
+                        <Button Content="移除选中项" Click="OnRemoveSilentApplication" />
+                    </StackPanel>
+                    <TextBlock Text="隐私名单" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <ListView x:Name="PrivacyApplicationsList"
+                              ItemsSource="{x:Bind ViewModel.PrivacyApplications, Mode=OneWay}" Height="88" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="添加隐私程序" Click="OnAddPrivacyApplication" />
+                        <Button Content="移除选中项" Click="OnRemovePrivacyApplication" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
             <TextBlock Text="忽略名单" Style="{StaticResource SettingsSection}" />

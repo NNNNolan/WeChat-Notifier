@@ -18,8 +18,11 @@ public static class SqlCipherPage
 {
     public const int PageSize = 4096;
     public const int ReserveSize = 80;
-    private const int WalHeaderSize = 32;
-    private const int WalFrameSize = 24 + PageSize;
+    internal const int WalHeaderSize = 32;
+    internal const int WalFrameSize = 24 + PageSize;
+
+    internal readonly record struct WalCommit(uint Frames, uint DatabasePages, uint Checksum0, uint Checksum1);
+    private sealed record WalRead(WalCommit Commit, Dictionary<uint, byte[]> Pages);
 
     public static byte[] DecryptPage(byte[] key, byte[] page, int pageNumber)
     {
@@ -76,33 +79,125 @@ public static class SqlCipherPage
     }
 
     /// <summary>Applies only valid frames through the last commit, including overflow pages.</summary>
-    public static int MergeWal(string snapshot, string walPath, byte[] key)
+    public static int MergeWal(string snapshot, string walPath, byte[] key, uint? committedFrames = null)
     {
         using var wal = new FileStream(walPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        if (wal.Length == 0) return 0;
+        var read = ReadWal(wal, key, committedFrames);
+        if (read.Commit.Frames == 0) return 0;
+        using var output = new FileStream(snapshot, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+        foreach (var (number, plain) in read.Pages)
+        {
+            if (number > read.Commit.DatabasePages) continue;
+            output.Position = ((long)number - 1) * PageSize;
+            output.Write(plain);
+        }
+        output.SetLength((long)read.Commit.DatabasePages * PageSize);
+        return checked((int)read.Commit.Frames);
+    }
+
+    /// <summary>Applies only frames after a previously committed WAL boundary.</summary>
+    internal static int MergeWalIncremental(string snapshot, string walPath, byte[] key,
+        WalCommit previous, WalCommit current)
+    {
+        if (current.Frames <= previous.Frames)
+            throw new ArgumentOutOfRangeException(nameof(current), "WAL 提交帧没有前进。");
+        using var wal = new FileStream(walPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var header = new byte[WalHeaderSize];
         wal.ReadExactly(header);
+        var bigEndian = ValidateWalHeader(header);
+        var frameCount = (wal.Length - WalHeaderSize) / WalFrameSize;
+        if (frameCount < current.Frames)
+            throw new DatabaseBusyException("增量 WAL 的提交帧尚未完整写入");
+
+        uint s0 = previous.Frames == 0
+            ? BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(24))
+            : previous.Checksum0;
+        uint s1 = previous.Frames == 0
+            ? BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(28))
+            : previous.Checksum1;
+        var pending = new Dictionary<uint, byte[]>();
+        var pages = new Dictionary<uint, byte[]>();
+        var frameHeader = new byte[24];
+        var page = new byte[PageSize];
+        wal.Position = WalHeaderSize + (long)previous.Frames * WalFrameSize;
+        WalCommit last = default;
+        for (var i = previous.Frames; i < current.Frames; i++)
+        {
+            wal.ReadExactly(frameHeader);
+            wal.ReadExactly(page);
+            if (!frameHeader.AsSpan(8, 8).SequenceEqual(header.AsSpan(16, 8)))
+                throw new DatabaseBusyException("增量 WAL 代次发生变化");
+            var pgno = BinaryPrimitives.ReadUInt32BigEndian(frameHeader);
+            if (pgno == 0) throw new DatabaseBusyException("增量 WAL 页号无效");
+            Checksum(frameHeader.AsSpan(0, 8), bigEndian, ref s0, ref s1);
+            Checksum(page, bigEndian, ref s0, ref s1);
+            if (s0 != BinaryPrimitives.ReadUInt32BigEndian(frameHeader.AsSpan(16))
+                || s1 != BinaryPrimitives.ReadUInt32BigEndian(frameHeader.AsSpan(20)))
+                throw new DatabaseBusyException("增量 WAL 校验失败");
+            pending[pgno] = DecryptPage(key, page, checked((int)pgno));
+            var commitSize = BinaryPrimitives.ReadUInt32BigEndian(frameHeader.AsSpan(4));
+            if (commitSize == 0) continue;
+            foreach (var (number, plain) in pending) pages[number] = plain;
+            pending.Clear();
+            last = new(checked(i + 1), commitSize, s0, s1);
+        }
+        if (last != current) throw new DatabaseBusyException("增量 WAL 末尾不是完整提交事务");
+        using var output = new FileStream(snapshot, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+        foreach (var (number, plain) in pages)
+        {
+            if (number > current.DatabasePages) continue;
+            output.Position = ((long)number - 1) * PageSize;
+            output.Write(plain);
+        }
+        output.SetLength((long)current.DatabasePages * PageSize);
+        return checked((int)(current.Frames - previous.Frames));
+    }
+
+    internal static WalCommit ReadCommit(FileStream wal) => ReadWal(wal, null, null).Commit;
+
+    internal static bool ValidateWalHeader(ReadOnlySpan<byte> header)
+    {
+        if (header.Length != WalHeaderSize) throw new InvalidDataException("WAL 头不完整");
         var magic = BinaryPrimitives.ReadUInt32BigEndian(header);
         if (magic is not (0x377f0682 or 0x377f0683)
-            || BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(4)) != 3007000
-            || BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(8)) != PageSize)
+            || BinaryPrimitives.ReadUInt32BigEndian(header[4..]) != 3007000
+            || BinaryPrimitives.ReadUInt32BigEndian(header[8..]) != PageSize)
             throw new InvalidDataException("不支持的 WAL 头");
-
-        var bigEndian = magic == 0x377f0683;
         uint s0 = 0, s1 = 0;
-        Checksum(header.AsSpan(0, 24), bigEndian, ref s0, ref s1);
-        if (s0 != BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(24))
-            || s1 != BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(28)))
+        var bigEndian = magic == 0x377f0683;
+        Checksum(header[..24], bigEndian, ref s0, ref s1);
+        if (s0 != BinaryPrimitives.ReadUInt32BigEndian(header[24..])
+            || s1 != BinaryPrimitives.ReadUInt32BigEndian(header[28..]))
             throw new InvalidDataException("WAL 头校验失败");
+        return bigEndian;
+    }
+
+    private static WalRead ReadWal(FileStream wal, byte[]? key, uint? committedFrames)
+    {
+        var pages = new Dictionary<uint, byte[]>();
+        if (wal.Length == 0)
+        {
+            if (committedFrames is > 0) throw new DatabaseBusyException("WAL 在读取前被截断");
+            return new(default, pages);
+        }
+        wal.Position = 0;
+        var header = new byte[WalHeaderSize];
+        wal.ReadExactly(header);
+        var bigEndian = ValidateWalHeader(header);
+        var s0 = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(24));
+        var s1 = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(28));
 
         var frameCount = (wal.Length - WalHeaderSize) / WalFrameSize;
-        var committed = 0;
-        uint databasePages = 0;
+        if (committedFrames.HasValue)
+        {
+            if (frameCount < committedFrames.Value) throw new DatabaseBusyException("已提交的 WAL 帧尚未完整写入");
+            frameCount = committedFrames.Value;
+        }
+        WalCommit commit = default;
         var frameHeader = new byte[24];
         var page = new byte[PageSize];
         // Keep the latest committed version of each page; the WAL may end mid-transaction.
         var pending = new Dictionary<uint, byte[]>();
-        var pages = new Dictionary<uint, byte[]>();
         for (var i = 0; i < frameCount; i++)
         {
             wal.ReadExactly(frameHeader);
@@ -115,28 +210,20 @@ public static class SqlCipherPage
             if (s0 != BinaryPrimitives.ReadUInt32BigEndian(frameHeader.AsSpan(16))
                 || s1 != BinaryPrimitives.ReadUInt32BigEndian(frameHeader.AsSpan(20))) break;
 
-            pending[pgno] = DecryptPage(key, page, checked((int)pgno));
+            if (key != null) pending[pgno] = DecryptPage(key, page, checked((int)pgno));
             var commitSize = BinaryPrimitives.ReadUInt32BigEndian(frameHeader.AsSpan(4));
             if (commitSize == 0) continue;
             foreach (var (number, plain) in pending) pages[number] = plain;
             pending.Clear();
-            databasePages = commitSize;
-            committed = i + 1;
+            commit = new(checked((uint)i + 1), commitSize, s0, s1);
         }
 
-        if (committed == 0) return 0;
-        using var output = new FileStream(snapshot, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
-        foreach (var (number, plain) in pages)
-        {
-            if (number > databasePages) continue;
-            output.Position = ((long)number - 1) * PageSize;
-            output.Write(plain);
-        }
-        output.SetLength((long)databasePages * PageSize);
-        return committed;
+        if (committedFrames.HasValue && commit.Frames != committedFrames.Value)
+            throw new DatabaseBusyException("已提交的 WAL 事务校验失败，快照需要重读");
+        return new(commit, pages);
     }
 
-    private static void Checksum(ReadOnlySpan<byte> bytes, bool bigEndian, ref uint s0, ref uint s1)
+    internal static void Checksum(ReadOnlySpan<byte> bytes, bool bigEndian, ref uint s0, ref uint s1)
     {
         for (var i = 0; i < bytes.Length; i += 8)
         {

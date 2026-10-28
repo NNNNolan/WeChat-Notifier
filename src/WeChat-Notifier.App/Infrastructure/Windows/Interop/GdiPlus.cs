@@ -115,6 +115,21 @@ internal static unsafe class GdiPlus
         finally { GdipDisposeImage(image); }
     }
 
+    internal static nint CreateIcon(byte[] pixels, int width, int height)
+    {
+        EnsureStarted();
+        fixed (byte* data = pixels)
+        {
+            Check(GdipCreateBitmapFromScan0(width, height, width * 4, PremultipliedArgb, data, out var image));
+            try
+            {
+                Check(GdipCreateHICONFromBitmap(image, out var icon));
+                return icon;
+            }
+            finally { GdipDisposeImage(image); }
+        }
+    }
+
     internal static void SavePixels(byte[] pixels, int width, int height, string path)
     {
         EnsureStarted();
@@ -166,5 +181,6 @@ internal static unsafe class GdiPlus
     [DllImport("gdiplus.dll")] private static extern int GdipDrawLine(nint graphics, nint pen, float x1, float y1, float x2, float y2);
     [DllImport("gdiplus.dll", CharSet = CharSet.Unicode)] private static extern int GdipLoadImageFromFile(string path, out nint image);
     [DllImport("gdiplus.dll")] private static extern int GdipDrawImageRect(nint graphics, nint image, float x, float y, float width, float height);
+    [DllImport("gdiplus.dll", ExactSpelling = true)] private static extern int GdipCreateHICONFromBitmap(nint bitmap, out nint hicon);
     [DllImport("gdiplus.dll", CharSet = CharSet.Unicode)] private static extern int GdipSaveImageToFile(nint image, string path, ref Guid encoder, nint parameters);
 }

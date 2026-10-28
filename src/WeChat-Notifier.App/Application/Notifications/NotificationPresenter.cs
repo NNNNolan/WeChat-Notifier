@@ -8,29 +8,41 @@ namespace WeChat_Notifier.Application.Notifications;
 
 internal sealed class NotificationPresenter(AppConfig config, ToastManager bubbles, WindowsNotificationService windows)
 {
-    public void ApplyMode()
+    public void ApplyMode(NotificationMode mode)
     {
         windows.ValidateAvailable();
-        if (config.UseWindowsNotifications) bubbles.ClearAll();
+        // 模式变化时清除旧的详细气泡，避免隐私模式下旧内容继续显示。
+        bubbles.ClearAll();
+        if (mode != NotificationMode.Normal) windows.SuppressPopups();
     }
 
-    public void Show(SessionInfo session)
+    public void Show(SessionInfo session, NotificationMode mode, bool suppressDisplay = false) =>
+        Show(session, config, mode, suppressDisplay);
+
+    private void Show(SessionInfo session, AppConfig options, NotificationMode mode, bool suppressDisplay = false,
+        bool preview = false)
     {
-        windows.Show(session, config, suppressDisplay: !config.UseWindowsNotifications);
-        if (config.UseWindowsNotifications) return;
-        bubbles.Show(session);
-        if (config.PlaySound && !Native.PlaySound("SystemAsterisk", 0, 0x00010001))
+        var plan = NotificationPresentation.Create(session, options, mode, suppressDisplay);
+        windows.Show(plan.Center, options, suppressDisplay: !plan.CenterBanner);
+        if (plan.Popup == null) return;
+        if (plan.WindowsPopup)
+        {
+            // 短期泛化横幅与长期详细记录分开；详细内容从不进入横幅。
+            windows.Show(plan.Popup, options, tagKey: session.Key + ":privacy-popup",
+                expiresAfter: TimeSpan.FromSeconds(8));
+        }
+        else if (preview) bubbles.ShowPreview(options, plan.Popup);
+        else bubbles.Show(plan.Popup);
+        if (plan.BubbleSound && !Native.PlaySound("SystemAsterisk", 0, 0x00010001))
             throw new InvalidOperationException("无法播放通知声音。");
     }
 
-    public void Preview(AppConfig options)
+    public void Preview(AppConfig options, NotificationMode mode)
     {
         bubbles.DismissPreview();
-        windows.Show(TestSession(), options, suppressDisplay: !options.UseWindowsNotifications);
-        if (!options.UseWindowsNotifications) bubbles.ShowPreview(options);
+        Show(TestSession(), options, mode, preview: true);
     }
 
-    public void ShowTest() => Show(TestSession());
     internal static SessionInfo TestSession() => new()
     {
         Key = "__test__", Title = "微信通知预览",

@@ -11,14 +11,14 @@
 
   <Identity
     Name="6d9890a3-5ae7-4dd9-bdc7-71cfbdf3cfab"
-    Publisher="CN=USER"
+    Publisher="CN=WeChat-Notifier"
     Version="1.0.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="6d9890a3-5ae7-4dd9-bdc7-71cfbdf3cfab" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
     <DisplayName>WeChat-Notifier</DisplayName>
-    <PublisherDisplayName>USER</PublisherDisplayName>
+    <PublisherDisplayName>WeChat-Notifier</PublisherDisplayName>
     <Logo>Assets\AppIcon.png</Logo>
     <uap10:PackageIntegrity>
       <uap10:Content Enforcement="on"/>

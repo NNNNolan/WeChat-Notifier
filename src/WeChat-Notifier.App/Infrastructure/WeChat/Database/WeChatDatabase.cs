@@ -16,9 +16,24 @@ public sealed class WeChatDatabase : IDisposable
     private readonly object _gate = new();
     private readonly string _workDir;
     private readonly Dictionary<string, byte[]> _keys;
-    private sealed record Snapshot(string Path, string Signature);
+    private sealed record Snapshot(string Path, SqliteCommitState State);
     private readonly Dictionary<string, Snapshot> _snapshots = new(StringComparer.OrdinalIgnoreCase);
     private readonly Action<string>? _log;
+    private Metadata? _metadata;
+    private readonly Dictionary<string, string> _accountSessions = new(StringComparer.OrdinalIgnoreCase);
+    private string? _preferredAccount;
+    internal long CommitChecks { get; private set; }
+    internal long SessionQueries { get; private set; }
+    internal long ContactQueries { get; private set; }
+    internal long BusinessQueries { get; private set; }
+    internal long SnapshotBuilds { get; private set; }
+    internal long IncrementalWalApplies { get; private set; }
+    private sealed record Metadata(CoreCommitState State,
+        Dictionary<string, (string Name, bool Muted, bool Official)> Contacts,
+        Dictionary<string, (string Name, bool Muted, string CompanyName)> Business);
+    private readonly record struct CoreCommitState(
+        SqliteCommitState Sessions, SqliteCommitState Contacts, SqliteCommitState? Business);
+    internal sealed record SessionRead(List<WeChatSession> Sessions, bool RebuildBaseline);
 
     public string Account { get; }
     public string SessionDbPath { get; }
@@ -26,10 +41,10 @@ public sealed class WeChatDatabase : IDisposable
     public string? BizChatDbPath { get; }
     public string? Wxid { get; }
 
-    private WeChatDatabase(string accountDir, string workDir, Dictionary<string, byte[]> keys, Action<string>? log)
+    internal WeChatDatabase(string accountDir, string workDir, Dictionary<string, byte[]> keys, Action<string>? log = null)
     {
         _accountDir = accountDir;
-        _workDir = workDir;
+        _workDir = Path.Combine(workDir, "snapshot-" + Environment.ProcessId + "-" + Guid.NewGuid().ToString("N"));
         _keys = keys;
         _log = log;
         Account = Path.GetFileName(accountDir.TrimEnd(Path.DirectorySeparatorChar));
@@ -39,6 +54,34 @@ public sealed class WeChatDatabase : IDisposable
         SessionDbPath = FindDb(storage, "session.db");
         ContactDbPath = FindDb(storage, "contact.db");
         BizChatDbPath = FindOptionalDb(storage, "bizchat.db");
+        _preferredAccount = PreferredAccount();
+    }
+
+    internal string[] DatabasePaths => BizChatDbPath == null
+        ? [SessionDbPath, ContactDbPath] : [SessionDbPath, ContactDbPath, BizChatDbPath];
+
+    internal bool AccountSelectionChanged()
+    {
+        var preferred = PreferredAccount();
+        if (preferred == _accountDir) { _preferredAccount = preferred; return false; }
+        return preferred != _preferredAccount;
+    }
+
+    private string? PreferredAccount()
+    {
+        var accounts = Directory.EnumerateDirectories(Path.GetDirectoryName(_accountDir)!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var removed in _accountSessions.Keys.Where(path => !accounts.Contains(path)).ToArray())
+            _accountSessions.Remove(removed);
+        foreach (var account in accounts)
+        {
+            if (_accountSessions.ContainsKey(account)) continue;
+            var storage = Path.Combine(account, "db_storage");
+            if (Directory.Exists(storage) && FindOptionalDb(storage, "session.db") is { } path)
+                _accountSessions.Add(account, path);
+        }
+        // 首次发现目录才定位 session.db；闲置核对不遍历整个消息库。
+        return _accountSessions.OrderByDescending(pair => WeChatDbLocator.SessionActivity(pair.Value))
+            .Select(pair => pair.Key).FirstOrDefault();
     }
 
     /// <summary>
@@ -66,14 +109,15 @@ public sealed class WeChatDatabase : IDisposable
 
                 log?.Invoke($"{Path.GetFileName(accountDir)}: {keys.Count} key(s)");
                 var db = new WeChatDatabase(accountDir, Path.GetDirectoryName(extractor.CacheFile)!, keys, log);
-                if (!db.CanReadCore(log))
+                try
                 {
-                    failures.Add($"{db.Account}: 密钥无法解开 session/contact/bizchat");
-                    db.Dispose();
-                    continue;
+                    if (db.CanReadCore(log)) return db;
                 }
-                return db;
+                catch { db.Dispose(); throw; }
+                failures.Add($"{db.Account}: 密钥无法解开 session/contact/bizchat");
+                db.Dispose();
             }
+            catch (DatabaseBusyException) { throw; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
                                            or InvalidOperationException or CryptographicException)
             {
@@ -98,15 +142,16 @@ public sealed class WeChatDatabase : IDisposable
     {
         try
         {
-            EnsureSnapshot(SessionDbPath);
-            EnsureSnapshot(ContactDbPath);
-            if (BizChatDbPath != null) EnsureSnapshot(BizChatDbPath);
-            using var conn = OpenReadOnly(SessionDbPath);
+            var state = ReadCommitState();
+            EnsureSnapshot(ContactDbPath, state.Contacts);
+            if (BizChatDbPath != null) EnsureSnapshot(BizChatDbPath, state.Business!.Value);
+            using var conn = OpenReadOnly(EnsureSnapshot(SessionDbPath, state.Sessions));
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT COUNT(*) FROM SessionTable";
             cmd.ExecuteScalar();
             return true;
         }
+        catch (DatabaseBusyException) { throw; }
         catch (Exception ex) when (ex is SqliteException or IOException or InvalidDataException)
         {
             log?.Invoke($"core read failed: {ex.GetType().Name}: {ex.Message}");
@@ -116,14 +161,74 @@ public sealed class WeChatDatabase : IDisposable
 
     public List<WeChatSession> GetSessions()
     {
-        using var sessions = OpenReadOnly(SessionDbPath);
-        using var contacts = OpenReadOnly(ContactDbPath);
-        using var bizchat = BizChatDbPath == null ? null : OpenReadOnly(BizChatDbPath);
-        return ReadSessions(sessions, contacts, bizchat);
+        return ReadChanges(force: true)!.Sessions;
+    }
+
+    /// <summary>提交未变时不打开 SQLite 连接；所有查询和缓存只由监听线程执行。</summary>
+    internal SessionRead? ReadChanges(bool force = false)
+    {
+        lock (_gate)
+        {
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                try
+                {
+                    var state = ReadCommitState();
+                    if (!force && _metadata?.State == state) return null;
+                    var sessionPath = EnsureSnapshot(SessionDbPath, state.Sessions);
+                    var contactPath = EnsureSnapshot(ContactDbPath, state.Contacts);
+                    var businessPath = BizChatDbPath == null ? null : EnsureSnapshot(BizChatDbPath, state.Business!.Value);
+                    Dictionary<string, (string Name, bool Muted, bool Official)> contactInfo;
+                    if (_metadata?.State.Contacts == state.Contacts) contactInfo = _metadata.Contacts;
+                    else
+                    {
+                        using var contacts = OpenReadOnly(contactPath);
+                        contactInfo = ContactMetadata(contacts);
+                        ContactQueries++;
+                    }
+                    Dictionary<string, (string Name, bool Muted, string CompanyName)> businessInfo;
+                    if (_metadata?.State.Contacts == state.Contacts && _metadata.State.Business == state.Business)
+                        businessInfo = _metadata.Business;
+                    else
+                    {
+                        using var contacts = businessPath == null ? null : OpenReadOnly(contactPath);
+                        using var business = businessPath == null ? null : OpenReadOnly(businessPath);
+                        businessInfo = BusinessMetadata(business, contacts, contactInfo);
+                        if (businessPath != null) BusinessQueries++;
+                    }
+                    using var sessions = OpenReadOnly(sessionPath);
+                    var result = ReadSessions(sessions, contactInfo, businessInfo);
+                    SessionQueries++;
+                    if (ReadCommitState() != state) throw new DatabaseBusyException("会话读取期间数据库发生提交");
+                    // 同账户 checkpoint/WAL 重建保留会话指纹，不能漏掉新代次的第一条消息。
+                    // 只有账户切换/连接重建才由上层明确建立基线。
+                    const bool rebuild = false;
+                    _metadata = new(state, contactInfo, businessInfo);
+                    return new(result, rebuild);
+                }
+                catch (DatabaseBusyException) when (attempt < 2) { Thread.Sleep(20); }
+            }
+        }
+        throw new DatabaseBusyException("数据库持续变化，无法读取一致的会话快照");
+    }
+
+    private CoreCommitState ReadCommitState()
+    {
+        CommitChecks++;
+        return new(SqliteCommitState.Read(SessionDbPath), SqliteCommitState.Read(ContactDbPath),
+            BizChatDbPath == null ? null : SqliteCommitState.Read(BizChatDbPath));
     }
 
     internal static List<WeChatSession> ReadSessions(
         SqliteConnection sessions, SqliteConnection contacts, SqliteConnection? bizchat)
+    {
+        var contactInfo = ContactMetadata(contacts);
+        return ReadSessions(sessions, contactInfo, BusinessMetadata(bizchat, contacts, contactInfo));
+    }
+
+    private static List<WeChatSession> ReadSessions(SqliteConnection sessions,
+        IReadOnlyDictionary<string, (string Name, bool Muted, bool Official)> contactInfo,
+        IReadOnlyDictionary<string, (string Name, bool Muted, string CompanyName)> businessInfo)
     {
         var result = new List<WeChatSession>();
         using var cmd = sessions.CreateCommand();
@@ -134,8 +239,6 @@ public sealed class WeChatDatabase : IDisposable
             ORDER BY sort_timestamp DESC
             """;
 
-        var contactInfo = ContactMetadata(contacts);
-        var businessInfo = BusinessMetadata(bizchat, contacts, contactInfo);
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
@@ -199,7 +302,7 @@ public sealed class WeChatDatabase : IDisposable
     }
 
     private static Dictionary<string, (string Name, bool Muted, string CompanyName)> BusinessMetadata(
-        SqliteConnection? bizchat, SqliteConnection contacts,
+        SqliteConnection? bizchat, SqliteConnection? contacts,
         IReadOnlyDictionary<string, (string Name, bool Muted, bool Official)> contactInfo)
     {
         var map = new Dictionary<string, (string, bool, string)>(StringComparer.Ordinal);
@@ -207,7 +310,7 @@ public sealed class WeChatDatabase : IDisposable
 
         // 企业消息服务号通过 belong 指向企业主体，不能直接用“企业名称消息”作前缀。
         var companies = new Dictionary<string, string>(StringComparer.Ordinal);
-        using (var parents = contacts.CreateCommand())
+        using (var parents = contacts!.CreateCommand())
         {
             parents.CommandText = "SELECT username, belong FROM biz_info WHERE belong IS NOT NULL AND belong <> ''";
             using var parentReader = parents.ExecuteReader();
@@ -235,18 +338,18 @@ public sealed class WeChatDatabase : IDisposable
         return map;
     }
 
-    private SqliteConnection OpenReadOnly(string plainDb)
+    private static SqliteConnection OpenReadOnly(string snapshot)
     {
-        var snapshot = EnsureSnapshot(plainDb);
         var conn = new SqliteConnection(new SqliteConnectionStringBuilder
         {
-            DataSource = snapshot, Mode = SqliteOpenMode.ReadOnly, Pooling = false
+            DataSource = new Uri(Path.GetFullPath(snapshot)).AbsoluteUri + "?immutable=1",
+            Mode = SqliteOpenMode.ReadOnly, Pooling = false
         }.ToString());
-        conn.Open();
-        return conn;
+        try { conn.Open(); return conn; }
+        catch { conn.Dispose(); throw; }
     }
 
-    private string EnsureSnapshot(string source)
+    private string EnsureSnapshot(string source, SqliteCommitState state)
     {
         lock (_gate)
         {
@@ -258,86 +361,54 @@ public sealed class WeChatDatabase : IDisposable
             var dst = Path.Combine(_workDir, rel.Replace(Path.DirectorySeparatorChar, '_'));
             var wal = source + "-wal";
 
-            // Polling must see database changes. Cache only while the main file
-            // and WAL are the same generation as the snapshot.
-            for (var attempt = 0; attempt < 3; attempt++)
+            if (_snapshots.TryGetValue(source, out var ready) && File.Exists(ready.Path) && ready.State == state)
+                return ready.Path;
+            var tmp = dst + "." + Environment.ProcessId + ".tmp";
+            try
             {
-                var signature = SnapshotSignature(source, wal);
-                if (_snapshots.TryGetValue(source, out var ready)
+                if (_snapshots.TryGetValue(source, out ready)
                     && File.Exists(ready.Path)
-                    && ready.Signature == signature)
+                    && ready.State.Main == state.Main
+                    && ready.State.MainHeader == state.MainHeader
+                    && (ready.State.WalGeneration == state.WalGeneration
+                        || ready.State.Commit.Frames == 0 && ready.State.WalGeneration.Length == 0)
+                    && state.Commit.Frames > ready.State.Commit.Frames)
+                {
+                    SqlCipherPage.MergeWalIncremental(ready.Path, wal, key, ready.State.Commit, state.Commit);
+                    if (SqliteCommitState.Read(source) != state)
+                        throw new DatabaseBusyException("数据库在增量快照期间发生提交");
+                    if (!QuickCheck(ready.Path)) throw new InvalidDataException("增量快照校验失败");
+                    _snapshots[source] = new Snapshot(ready.Path, state);
+                    IncrementalWalApplies++;
+                    _log?.Invoke($"WAL {rel}: incremental frames {ready.State.Commit.Frames}->{state.Commit.Frames}");
                     return ready.Path;
-
-                var tmp = dst + "." + Environment.ProcessId + "." + attempt + ".tmp";
-                try
-                {
-                    SqlCipherPage.DecryptFile(source, tmp, key);
-                    if (File.Exists(wal) && new FileInfo(wal).Length > 32)
-                    {
-                        var frames = SqlCipherPage.MergeWal(tmp, wal, key);
-                        _log?.Invoke($"WAL {rel}: {frames} committed frame(s)");
-                    }
-
-                    // A writer may append while we read. Retry rather than
-                    // publish a snapshot assembled from two WAL generations.
-                    if (SnapshotSignature(source, wal) != signature)
-                    {
-                        _log?.Invoke($"snapshot {rel} changed during decrypt, retrying");
-                        continue;
-                    }
-
-                    _log?.Invoke($"snapshot {rel} size={new FileInfo(tmp).Length}");
-                    if (!QuickCheck(tmp))
-                        throw new InvalidDataException("解密结果校验失败，微信可能正在 checkpoint");
-
-                    if (File.Exists(dst))
-                        File.Replace(tmp, dst, null);
-                    else
-                        File.Move(tmp, dst);
-                    _snapshots[source] = new Snapshot(dst, signature);
-                    return dst;
                 }
-                finally
+                if (SqliteCommitState.Read(source) != state) throw new DatabaseBusyException("数据库在快照开始前发生提交");
+                SqlCipherPage.DecryptFile(source, tmp, key);
+                if (state.Commit.Frames > 0)
                 {
-                    try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                    var frames = SqlCipherPage.MergeWal(tmp, wal, key, state.Commit.Frames);
+                    _log?.Invoke($"WAL {rel}: {frames} committed frame(s)");
                 }
+                if (SqliteCommitState.Read(source) != state)
+                    throw new DatabaseBusyException("数据库在快照生成期间发生提交");
+                if (!QuickCheck(tmp)) throw new InvalidDataException("解密结果校验失败，微信可能正在 checkpoint");
+                // 私有快照同目录原子覆盖，不合并旧文件的 ACL/元数据。
+                File.Move(tmp, dst, overwrite: true);
+                _snapshots[source] = new Snapshot(dst, state);
+                SnapshotBuilds++;
+                _log?.Invoke($"snapshot {rel} size={new FileInfo(dst).Length}");
+                return dst;
             }
-
-            throw new InvalidDataException("微信数据库持续变化，无法生成一致快照");
+            finally { if (File.Exists(tmp)) File.Delete(tmp); }
         }
-    }
-
-    private static string SnapshotSignature(string source, string wal)
-    {
-        static string Part(string path)
-        {
-            var info = new FileInfo(path);
-            return info.Exists ? $"{info.Length}:{info.LastWriteTimeUtc.Ticks}" : "-";
-        }
-        // Windows can keep the mtime/length unchanged while a preallocated WAL
-        // is overwritten. The wal-index headers also change on each commit.
-        var shm = source + "-shm";
-        var walIndex = "-";
-        if (File.Exists(shm))
-        {
-            using var stream = new FileStream(shm, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete);
-            var header = new byte[96];
-            stream.ReadExactly(header);
-            walIndex = Convert.ToHexString(header);
-        }
-        return Part(source) + "|" + Part(wal) + "|" + walIndex;
     }
 
     private static bool QuickCheck(string path)
     {
         try
         {
-            using var conn = new SqliteConnection(new SqliteConnectionStringBuilder
-            {
-                DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false
-            }.ToString());
-            conn.Open();
+            using var conn = OpenReadOnly(path);
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "PRAGMA quick_check";
             using var r = cmd.ExecuteReader();
@@ -354,6 +425,13 @@ public sealed class WeChatDatabase : IDisposable
 
     public void Dispose()
     {
-        lock (_gate) _snapshots.Clear();
+        lock (_gate)
+        {
+            _snapshots.Clear();
+            _metadata = null;
+            if (!Directory.Exists(_workDir)) return;
+            foreach (var file in Directory.EnumerateFiles(_workDir)) File.Delete(file);
+            Directory.Delete(_workDir);
+        }
     }
 }

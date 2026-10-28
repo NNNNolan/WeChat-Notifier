@@ -20,5 +20,8 @@ public sealed class SessionInfo
     /// <summary>数据库中的未读数。</summary>
     public int Unread { get; init; }
 
+    /// <summary>本次数据库快照中增加的消息数，不包含启动时已有的未读。</summary>
+    public int NewMessageCount { get; init; } = 1;
+
     public override string ToString() => $"{Title} | {Time} | {Preview.Replace('\n', ' ')}";
 }

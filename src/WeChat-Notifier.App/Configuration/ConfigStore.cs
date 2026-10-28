@@ -56,6 +56,12 @@ public static class ConfigStore
         target.MaxVisible = source.MaxVisible;
         target.UseWindowsNotifications = source.UseWindowsNotifications;
         target.PlaySound = source.PlaySound;
+        target.NotificationMode = source.NotificationMode;
+        target.ModeSwitchHotkey = source.ModeSwitchHotkey;
+        target.ModeSwitchHotkeyEnabled = source.ModeSwitchHotkeyEnabled;
+        target.NotifyOnAutomaticModeChange = source.NotifyOnAutomaticModeChange;
+        target.SilentApplications = new List<string>(source.SilentApplications);
+        target.PrivacyApplications = new List<string>(source.PrivacyApplications);
         target.PollIntervalMs = source.PollIntervalMs;
         target.SkipMuted = source.SkipMuted;
         target.SkipOwnMessages = source.SkipOwnMessages;
@@ -105,8 +111,15 @@ public static class ConfigStore
             || c.SkipSessions.Any(string.IsNullOrWhiteSpace) || c.SkipKeywords.Any(string.IsNullOrWhiteSpace)
             || c.WeChatHotkey == null || c.WeChatPath == null)
             throw new InvalidDataException("配置中的列表和路径不能为 null，忽略列表不能含空项。");
-        if (c.WeChatHotkeyEnabled && !HotkeyParser.TryParse(c.WeChatHotkey, out _))
-            throw new InvalidDataException("微信热键应为修饰键加字母、数字或 F1～F24，例如 Ctrl+Alt+W。");
+        NotificationModeParser.Parse(c.NotificationMode);
+        ApplicationRules.Validate(c);
+        if (c.WeChatHotkeyEnabled && (!HotkeyParser.TryParse(c.WeChatHotkey, out var wechatHotkey) || wechatHotkey.AdditionalKey != 0))
+            throw new InvalidDataException("微信热键应为修饰键加字母、数字、逗号、句号或 F1～F24，例如 Ctrl+Alt+W。");
+        if (c.ModeSwitchHotkeyEnabled && !HotkeyParser.TryParse(c.ModeSwitchHotkey, out _))
+            throw new InvalidDataException("模式切换热键应为修饰键加字母、数字、逗号、句号、逗号与句号组合或 F1～F24。");
+        if (c.ModeSwitchHotkeyEnabled && c.WeChatHotkeyEnabled
+            && GlobalHotkeys.SameHotkey(c.WeChatHotkey, c.ModeSwitchHotkey))
+            throw new InvalidDataException("模式切换快捷键不能与微信快捷键相同。");
         Range(c.Width, 260, 800, nameof(c.Width));
         Range(c.MarginX, 0, 400, nameof(c.MarginX));
         Range(c.MarginY, 0, 400, nameof(c.MarginY));

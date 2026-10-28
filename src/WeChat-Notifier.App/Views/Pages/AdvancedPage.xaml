@@ -4,10 +4,11 @@
       xmlns:c="using:WeChat_Notifier.Views.Controls">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="12" Padding="0,0,12,20">
-            <TextBlock Text="读取与轮询" Style="{StaticResource SettingsSection}" />
+            <TextBlock Text="数据库监听" Style="{StaticResource SettingsSection}" />
             <Border Style="{StaticResource SettingsCard}">
-                <c:SliderRow x:Name="PollSlider" Label="微信轮询间隔" Min="150" Max="10000" Step="50" Suffix=" ms"
-                             Hint="调大可减少 CPU 占用，但新通知会相应延后。" Value="{x:Bind ViewModel.PollIntervalMs, Mode=TwoWay}" />
+                <c:SliderRow x:Name="PollSlider" Label="提交状态核对间隔" Min="150" Max="10000" Step="50" Suffix=" ms"
+                             Hint="数据库修改立即触发读取；此间隔只用于轻量核对、防止文件事件丢失。提交未变时不查询 SQLite。默认 3000 ms。"
+                             Value="{x:Bind ViewModel.PollIntervalMs, Mode=TwoWay}" />
             </Border>
             <TextBlock Text="玻璃物理参数" Style="{StaticResource SettingsSection}" />
             <Border Style="{StaticResource SettingsCard}">

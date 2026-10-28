@@ -6,7 +6,7 @@
             <Border Style="{StaticResource SettingsCard}">
                 <Grid ColumnSpacing="16">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                    <Image Source="ms-appx:///Assets/AppIcon.ico" Width="52" Height="52" VerticalAlignment="Top"
+                    <Image Source="ms-appx:///Assets/AppIcon.png" Width="52" Height="52" VerticalAlignment="Top"
                            AutomationProperties.Name="微信通知图标" />
                     <StackPanel Grid.Column="1" Spacing="8">
                         <TextBlock Text="WeChat-Notifier" Style="{StaticResource SubtitleTextBlockStyle}" />

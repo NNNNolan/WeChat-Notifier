@@ -13,6 +13,7 @@ internal sealed class ToastManager : IDisposable
     private readonly List<ToastWindow> _toasts = [];
     private readonly DispatcherQueueTimer _previewDebounce;
     private ToastWindow? _preview;
+    private ToastWindow? _status;
     public AppConfig LayoutConfig { get; set; }
     public Action<SessionInfo>? ActivateChat { get; set; }
     public event Action<TimeSpan?>? SuppressNotificationsRequested;
@@ -29,9 +30,18 @@ internal sealed class ToastManager : IDisposable
 
     public void Show(SessionInfo session) => Add(_config, session, false);
 
-    private void Add(AppConfig options, SessionInfo session, bool pinned)
+    public void ShowStatus(string title, string body)
     {
-        var toast = new ToastWindow(options, session, _dispatcher, ScreenHelper.Resolve(LayoutConfig.Monitor).Scale, pinned)
+        DismissStatus();
+        _status = Add(_config, new SessionInfo
+        {
+            Key = "__status__", Title = title, Preview = body, Time = DateTime.Now.ToString("HH:mm")
+        }, pinned: false, transient: true);
+    }
+
+    private ToastWindow Add(AppConfig options, SessionInfo session, bool pinned, bool transient = false)
+    {
+        var toast = new ToastWindow(options, session, _dispatcher, ScreenHelper.Resolve(LayoutConfig.Monitor).Scale, pinned, transient)
         {
             ActivateRequested = s => ActivateChat?.Invoke(s),
             SuppressNotificationsRequested = duration => SuppressNotificationsRequested?.Invoke(duration)
@@ -44,18 +54,21 @@ internal sealed class ToastManager : IDisposable
             var oldest = _toasts[^1];
             _toasts.RemoveAt(_toasts.Count - 1);
             if (ReferenceEquals(oldest, _preview)) _preview = null;
+            if (ReferenceEquals(oldest, _status)) _status = null;
             oldest.Finished -= OnFinished;
             oldest.Dispose();
         }
         try { Relayout(toast); }
         catch { _toasts.Remove(toast); toast.Finished -= OnFinished; toast.Dispose(); throw; }
         Changed?.Invoke();
+        return toast;
     }
 
     private void OnFinished(ToastWindow toast)
     {
         toast.Finished -= OnFinished;
         if (ReferenceEquals(_preview, toast)) _preview = null;
+        if (ReferenceEquals(_status, toast)) _status = null;
         _toasts.Remove(toast);
         Relayout();
         Changed?.Invoke();
@@ -84,10 +97,13 @@ internal sealed class ToastManager : IDisposable
         }
     }
 
-    public void ShowPreview(AppConfig working)
+    public void ShowPreview(AppConfig working, SessionInfo? session = null)
     {
+        if (_preview != null && session != null
+            && (_preview.Session.Title != session.Title || _preview.Session.Preview != session.Preview))
+            DismissPreview();
         LayoutConfig = working;
-        if (_preview == null) Add(working, new SessionInfo
+        if (_preview == null) Add(working, session ?? new SessionInfo
         {
             Key = "__preview__", Title = "微信通知预览",
             Preview = "这就是气泡的实际效果。\n修改左侧参数，预览会实时更新。", Time = DateTime.Now.ToString("HH:mm")
@@ -116,10 +132,18 @@ internal sealed class ToastManager : IDisposable
         Relayout();
     }
 
+    private void DismissStatus()
+    {
+        var status = _status;
+        _status = null;
+        status?.Dispose();
+    }
+
     public void ClearAll()
     {
         _previewDebounce.Stop();
         _preview = null;
+        _status = null;
         foreach (var toast in _toasts.ToArray()) { toast.Finished -= OnFinished; toast.Dispose(); }
         _toasts.Clear();
         LayoutConfig = _config;

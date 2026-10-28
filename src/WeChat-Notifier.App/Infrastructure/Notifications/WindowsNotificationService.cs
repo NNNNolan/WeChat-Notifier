@@ -49,20 +49,50 @@ public sealed class WindowsNotificationService : IDisposable
             throw new InvalidOperationException($"Windows 已禁用本程序通知（{_manager.Setting}）。请在系统设置 → 系统 → 通知中启用微信通知。");
     }
 
-    public uint Show(SessionInfo session, AppConfig options, bool suppressDisplay = false)
+    internal void SuppressPopups()
+    {
+        // GetAll 不保留 SuppressDisplay 这一投递参数；按组撤回，不能依赖其返回的默认值。
+        // 同步完成撤回，模式切换返回前不能留下旧的详细横幅。
+        foreach (var notification in GetAllAsync().GetAwaiter().GetResult()
+            .Where(n => n.Group == Group))
+        {
+            var replacement = WithoutPopup(notification);
+            RemoveByTagAndGroupAsync(notification.Tag, notification.Group).GetAwaiter().GetResult();
+            if (replacement.Expiration <= DateTimeOffset.Now) continue;
+            _manager!.Show(replacement);
+            if (replacement.Id == 0) throw new InvalidOperationException("Windows 未接受模式切换后的通知中心记录。");
+        }
+    }
+
+    internal static AppNotification WithoutPopup(AppNotification original)
+    {
+        var payload = XElement.Parse(original.Payload);
+        payload.Element("audio")?.Remove();
+        payload.Add(new XElement("audio", new XAttribute("silent", "true")));
+        return new(payload.ToString(SaveOptions.DisableFormatting))
+        {
+            Tag = original.Tag, Group = original.Group, Expiration = original.Expiration,
+            ExpiresOnReboot = original.ExpiresOnReboot, SuppressDisplay = true
+        };
+    }
+
+    public uint Show(SessionInfo session, AppConfig options, bool suppressDisplay = false,
+        string? tagKey = null, TimeSpan? expiresAfter = null)
     {
         ValidateAvailable();
-        var notification = CreateNotification(session, options, suppressDisplay);
+        var notification = CreateNotification(session, options, suppressDisplay, tagKey);
+        if (expiresAfter.HasValue) notification.Expiration = DateTimeOffset.Now.Add(expiresAfter.Value);
         _manager!.Show(notification);
         if (notification.Id == 0) throw new InvalidOperationException("Windows 未接受该通知。");
         Log.Info($"windows notification accepted: id={notification.Id}");
         return notification.Id;
     }
 
-    internal static AppNotification CreateNotification(SessionInfo session, AppConfig options, bool suppressDisplay = false) =>
+    internal static AppNotification CreateNotification(SessionInfo session, AppConfig options,
+        bool suppressDisplay = false, string? tagKey = null) =>
         new(BuildPayload(session, options, suppressDisplay))
         {
-            Tag = TagFor(session.Key), Group = Group,
+            Tag = TagFor(tagKey ?? session.Key), Group = Group,
             ExpiresOnReboot = true, Expiration = DateTimeOffset.Now.AddDays(1), SuppressDisplay = suppressDisplay
         };
 
@@ -96,7 +126,15 @@ public sealed class WindowsNotificationService : IDisposable
     }
 
     internal static HashSet<string> ReadTagsForSessions(IReadOnlyList<WeChatSession> sessions) =>
-        sessions.Where(s => s.Unread == 0).Select(s => TagFor(s.Username)).ToHashSet(StringComparer.Ordinal);
+        sessions.Where(s => s.Unread == 0)
+            .SelectMany(s => new[]
+            {
+                TagFor(s.Username),
+                TagFor(s.Username + ":privacy-popup"),
+                TagFor(s.Username + ":privacy-detail"),
+                TagFor(s.Username + ":silent")
+            })
+            .ToHashSet(StringComparer.Ordinal);
 
     internal static IReadOnlyList<string> FindReadNotificationTags(
         IReadOnlyList<(string Tag, string Group)> notifications, IReadOnlySet<string> readTags) =>

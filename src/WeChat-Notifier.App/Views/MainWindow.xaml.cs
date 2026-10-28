@@ -63,7 +63,7 @@ public sealed partial class MainWindow : Window
         PageHost.Content = tag switch
         {
             "appearance" => _appearance ??= new AppearancePage(_viewModel),
-            "behaviour" => _behaviour ??= new BehaviourPage(_viewModel),
+            "behaviour" => _behaviour ??= new BehaviourPage(_viewModel, this),
             "hotkeys" => _hotkeys ??= new HotkeysPage(_viewModel, this, _controller.Hotkeys),
             "advanced" => _advanced ??= new AdvancedPage(_viewModel, this),
             "about" => _about ??= new AboutPage(_viewModel, this),
@@ -108,9 +108,12 @@ public sealed partial class MainWindow : Window
 
     private void RefreshStatus()
     {
-        ConnectionText.Text = _controller.Paused ? "通知已暂停" : _controller.ConnectionText + "\n" + _controller.WeChatStateText;
+        ConnectionText.Text = _controller.Paused ? "通知已暂停"
+            : _controller.ModeText + "\n" + _controller.ConnectionText + "\n" + _controller.WeChatStateText;
         PauseButton.Content = _controller.Paused ? "恢复通知" : "暂停通知";
     }
+
+    internal void SynchronizeManualMode(string mode) => _viewModel.SynchronizeManualMode(mode);
 
     private void OnPause(object sender, RoutedEventArgs e) => _controller.SetPaused(!_controller.Paused);
     private void OnPreview(object sender, RoutedEventArgs e)
@@ -239,6 +242,7 @@ public sealed partial class MainWindow : Window
                             appearance.CheckBindings();
                             break;
                         case BehaviourPage behaviour: behaviour.CheckBindings(); break;
+                        case HotkeysPage hotkeys: hotkeys.CheckBindings(); break;
                         case AdvancedPage advanced: advanced.CheckBindings(); break;
                     }
                     if (_viewModel.IsDirty) throw new InvalidOperationException("界面绑定初始化或还原操作修改了配置。");
@@ -258,6 +262,13 @@ public sealed partial class MainWindow : Window
         }
         _controller.EndPreview();
         Log.Info("WinUI pages rendered and bindings verified: " + directory);
+    }
+
+    internal void VerifyTitleIcon()
+    {
+        if (AppTitleBar.IconSource is not Microsoft.UI.Xaml.Controls.ImageIconSource
+            { ImageSource: BitmapImage { PixelWidth: > 0, PixelHeight: > 0 } })
+            throw new InvalidOperationException("主窗体标题图标没有成功加载。");
     }
 
     private static string CreateFile(string path) { using var file = File.Create(path); return path; }

@@ -30,10 +30,19 @@ internal static class SelfTest
             catch (Exception ex) { failures++; Console.Error.WriteLine("FAIL " + name + ": " + ex); }
         }
         Check("SQLCipher / WAL 已提交事务", WeChatChecks.WalTransactions);
+        Check("WAL/SHM 提交状态、未提交事务和原位覆盖", DatabaseMonitoringChecks.CommitState);
+        Check("无变更零查询与联系人/企业缓存更新", DatabaseMonitoringChecks.QueriesAndMetadata);
+        Check("真实文件事件、重命名和缓冲区溢出", DatabaseMonitoringChecks.FileEvents);
+        Check("事件读取、暂停恢复与退出生命周期", DatabaseMonitoringChecks.SourceLifecycle);
         Check("企业群/联系人名称和免打扰", WeChatChecks.BusinessSessionMetadata);
         Check("消息过滤和无历史重放", WeChatChecks.NotificationPolicy);
         Check("只读内存扫描及跨块匹配", WeChatChecks.MemoryScan);
         Check("AOT 配置序列化与工作副本隔离", Settings);
+        Check("自动模式优先级、退出恢复与名单移动", ModeChecks.Rules);
+        Check("正常/隐私/静默通知内容边界", ModeChecks.Privacy);
+        Check("模式托盘色值、角标与已读清零", ModeChecks.Badges);
+        Check("Serilog 写入、异常和日志级别", ModeChecks.Serilog);
+        Check("模式应用完整路径与同名程序隔离", ModeChecks.ProcessPaths);
         Check("微信状态与前台通知抑制", WindowNotificationPolicy);
         Check("EXE 目录配置和日志路径", PortablePaths);
         Check("通知 XML 编码、声音与已读撤回", SystemPayload);
@@ -143,9 +152,9 @@ internal static class SelfTest
 
     private static string? Hotkeys()
     {
-        foreach (var valid in new[] { "Ctrl+Alt+W", "Win+F24", "Shift+1" })
+        foreach (var valid in new[] { "Ctrl+Alt+W", "Win+F24", "Shift+1", "Ctrl+Alt+,", "Ctrl+Alt+.", "Ctrl+Alt+,+.", "Alt+Ctrl+.+," })
             if (!HotkeyParser.TryParse(valid, out _)) return "合法热键拒绝：" + valid;
-        foreach (var invalid in new[] { "W", "Ctrl+Ctrl+A", "Ctrl+汉", "Alt+F25", "Ctrl+A+B" })
+        foreach (var invalid in new[] { "W", "Ctrl+Ctrl+A", "Ctrl+汉", "Alt+F25", "Ctrl+A+B", "Ctrl+,+,", "Ctrl+,+.+M" })
             if (HotkeyParser.TryParse(invalid, out _)) return "无效热键通过：" + invalid;
         using var window = new NativeWindow("WeChatNotifier.SelfTest");
         return Native.IsWindow(window.Handle) ? null : "AOT 原生窗口回调无法注册";

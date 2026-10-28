@@ -13,8 +13,21 @@
                     <ToggleSwitch Header="启用微信启动热键" IsOn="{x:Bind ViewModel.WeChatHotkeyEnabled, Mode=TwoWay}" />
                     <TextBox x:Name="HotkeyInput" Header="显示 / 隐藏快捷键" IsReadOnly="True"
                              Text="{x:Bind ViewModel.WeChatHotkey, Mode=OneWay}"
-                             KeyDown="OnHotkeyKeyDown" GotFocus="OnHotkeyGotFocus" LostFocus="OnHotkeyLostFocus" />
-                    <TextBlock Text="点击输入框后直接按组合键。Esc 退出录制，Backspace 清除并停用热键。支持 Ctrl、Alt、Shift、Win 与字母、数字、F1～F24。"
+                             PreviewKeyDown="OnHotkeyKeyDown" PreviewKeyUp="OnHotkeyKeyUp" GotFocus="OnHotkeyGotFocus" LostFocus="OnHotkeyLostFocus" />
+                    <TextBlock Text="点击输入框后直接按组合键。Esc 退出录制，Backspace 清除并停用热键。支持 Ctrl、Alt、Shift、Win 与字母、数字、逗号、句号、F1～F24。"
+                               Style="{StaticResource SettingsHint}" />
+                </StackPanel>
+            </Border>
+            <TextBlock Text="模式切换热键" Style="{StaticResource SettingsSection}" />
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel Spacing="12">
+                    <TextBlock x:Name="ModeHotkeyStatus" Style="{StaticResource SettingsHint}" />
+                    <ToggleSwitch Header="启用模式切换热键"
+                                  IsOn="{x:Bind ViewModel.ModeSwitchHotkeyEnabled, Mode=TwoWay}" />
+                    <TextBox x:Name="ModeHotkeyInput" Header="循环切换：正常 → 隐私 → 静默" IsReadOnly="True"
+                             Text="{x:Bind ViewModel.ModeSwitchHotkey, Mode=OneWay}"
+                             PreviewKeyDown="OnHotkeyKeyDown" PreviewKeyUp="OnHotkeyKeyUp" GotFocus="OnHotkeyGotFocus" LostFocus="OnHotkeyLostFocus" />
+                    <TextBlock Text="默认 Ctrl+Alt+,+.，同时按住 Ctrl、Alt、逗号与句号四个键。点击输入框录制，标点键松开后完成；Esc 取消，Backspace 清除并停用。保存后生效。"
                                Style="{StaticResource SettingsHint}" />
                 </StackPanel>
             </Border>

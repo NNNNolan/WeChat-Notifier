@@ -1,6 +1,10 @@
+using System.ComponentModel;
+using System.Text;
+using WeChat_Notifier.Infrastructure.Windows.Interop;
+
 namespace WeChat_Notifier.Configuration;
 
-/// <summary>用户文件位于真实 EXE 目录；单文件解包目录只用于加载程序资源。</summary>
+/// <summary>便携版用户文件位于 EXE 目录；MSIX 使用包的 LocalState。</summary>
 public static class AppPaths
 {
     public static string ProgramDirectory { get; } = DirectoryForExecutable(
@@ -25,6 +29,17 @@ public static class AppPaths
     {
         // 回归测试隔离文件，不改动实际运行配置。
         var diagnostic = Environment.GetEnvironmentVariable("WECHAT_NOTIFIER_DATA_DIR");
-        return string.IsNullOrWhiteSpace(diagnostic) ? ProgramDirectory : Path.GetFullPath(diagnostic);
+        if (!string.IsNullOrWhiteSpace(diagnostic)) return Path.GetFullPath(diagnostic);
+
+        uint length = 0;
+        var result = Native.GetCurrentPackageFamilyName(ref length, null);
+        if (result == Native.APPMODEL_ERROR_NO_PACKAGE) return ProgramDirectory;
+        if (result != Native.ERROR_INSUFFICIENT_BUFFER) throw new Win32Exception(result, "无法查询 MSIX 包身份。");
+
+        var familyName = new StringBuilder((int)length);
+        result = Native.GetCurrentPackageFamilyName(ref length, familyName);
+        if (result != 0) throw new Win32Exception(result, "无法读取 MSIX 包身份。");
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Packages", familyName.ToString(), "LocalState");
     }
 }

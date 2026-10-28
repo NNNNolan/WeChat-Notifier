@@ -58,6 +58,8 @@
     <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.6.4" />
     <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="2.6.4" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
+    <PackageReference Include="Serilog" Version="4.3.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
   </ItemGroup>
 
   <!--
@@ -84,6 +86,12 @@
   <Target Name="ValidateAotArchitecture" BeforeTargets="PrepareForBuild"
           Condition="'$(PublishAot)' == 'true' and '$(RuntimeIdentifier)' != 'win-x64' and '$(RuntimeIdentifier)' != 'win-arm64'">
     <Error Text="Native AOT 只支持 win-x64 和 win-arm64；x86 请使用普通发布。" />
+  </Target>
+  <Target Name="InvalidateTrimmedDependencyFile" AfterTargets="ILLink"
+          BeforeTargets="GeneratePublishDependencyFile"
+          Condition="'$(PublishTrimmed)' == 'true' and '$(PublishAot)' != 'true'">
+    <!-- SDK 只按项目/还原缓存更新 deps.json，代码新增框架依赖后可能沿用旧裁剪清单。 -->
+    <Delete Files="$(IntermediateOutputPath)$(AssemblyName).deps.json" />
   </Target>
   <Import Project="Build\ChineseOnly.targets" />
 </Project>
