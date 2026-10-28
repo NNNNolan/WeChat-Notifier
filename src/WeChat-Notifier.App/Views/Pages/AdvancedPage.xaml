@@ -1,0 +1,55 @@
+<Page x:Class="WeChat_Notifier.Views.Pages.AdvancedPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:c="using:WeChat_Notifier.Views.Controls">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12" Padding="0,0,12,20">
+            <TextBlock Text="读取与轮询" Style="{StaticResource SettingsSection}" />
+            <Border Style="{StaticResource SettingsCard}">
+                <c:SliderRow x:Name="PollSlider" Label="微信轮询间隔" Min="150" Max="10000" Step="50" Suffix=" ms"
+                             Hint="调大可减少 CPU 占用，但新通知会相应延后。" Value="{x:Bind ViewModel.PollIntervalMs, Mode=TwoWay}" />
+            </Border>
+            <TextBlock Text="玻璃物理参数" Style="{StaticResource SettingsSection}" />
+            <Border Style="{StaticResource SettingsCard}">
+                <ContentControl IsEnabled="{x:Bind ViewModel.UseCustomBubble, Mode=OneWay}" HorizontalContentAlignment="Stretch">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="保留原项目的液态玻璃渲染算法与默认参数。修改时可使用「预览通知」查看实际效果。"
+                               Style="{StaticResource SettingsHint}" Margin="0,0,0,16" />
+                    <c:SliderRow Label="玻璃厚度" Min="0" Max="60" Step="1"
+                                 Value="{x:Bind ViewModel.GlassThickness, Mode=TwoWay}" />
+                    <c:SliderRow Label="背景霜化" Min="0" Max="24" Step="0.5" Format="0.0"
+                                 Value="{x:Bind ViewModel.GlassBlur, Mode=TwoWay}" />
+                    <c:SliderRow Label="折射率" Min="1" Max="2" Step="0.01" Format="0.00"
+                                 Value="{x:Bind ViewModel.GlassRefractiveIndex, Mode=TwoWay}" />
+                    <c:SliderRow Label="色散量" Min="0" Max="1" Step="0.01" Format="0.00"
+                                 Value="{x:Bind ViewModel.GlassChromaticAberration, Mode=TwoWay}" />
+                    <c:SliderRow Label="折射位移倍率" Min="0" Max="3" Step="0.05" Format="0.00"
+                                 Value="{x:Bind ViewModel.GlassRefractScale, Mode=TwoWay}" />
+                    <c:SliderRow Label="背景饱和度" Min="0.2" Max="2" Step="0.05" Format="0.00"
+                                 Value="{x:Bind ViewModel.GlassSaturation, Mode=TwoWay}" />
+                    <c:SliderRow Label="白色着色" Min="0" Max="0.8" Step="0.01" Format="0.00"
+                                 Value="{x:Bind ViewModel.GlassTint, Mode=TwoWay}" />
+                    <c:SliderRow Label="镜面高光强度" Min="0" Max="3" Step="0.05" Format="0.00"
+                                 Value="{x:Bind ViewModel.GlassLightIntensity, Mode=TwoWay}" />
+                    <c:SliderRow Label="边缘光强度" Min="0" Max="2" Step="0.05" Format="0.00"
+                                 Value="{x:Bind ViewModel.GlassAmbientStrength, Mode=TwoWay}" />
+                    <c:SliderRow Label="光源角度" Min="0" Max="360" Step="5" Suffix="°"
+                                 Value="{x:Bind ViewModel.GlassLightAngle, Mode=TwoWay}" />
+                </StackPanel>
+                </ContentControl>
+            </Border>
+            <TextBlock Text="诊断" Style="{StaticResource SettingsSection}" />
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel Spacing="16">
+                    <ToggleSwitch Header="详细日志" IsOn="{x:Bind ViewModel.VerboseLog, Mode=TwoWay}" />
+                    <TextBlock Text="日志中的 [decide] 记录消息是否通知及过滤原因；wechat: 记录数据库连接情况。"
+                               Style="{StaticResource SettingsHint}" />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <Button Content="打开配置文件" Click="OnOpenConfig" />
+                        <Button Content="打开日志目录" Click="OnOpenLog" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

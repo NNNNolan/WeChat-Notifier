@@ -1,0 +1,77 @@
+<Page x:Class="WeChat_Notifier.Views.Pages.AppearancePage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:c="using:WeChat_Notifier.Views.Controls">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12" Padding="0,0,12,20">
+            <TextBlock Text="通知方式" Style="{StaticResource SettingsSection}" />
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel Spacing="16">
+                    <ToggleSwitch x:Name="SystemNotificationsToggle" Header="使用 Windows 系统通知"
+                                  IsOn="{x:Bind ViewModel.UseWindowsNotifications, Mode=TwoWay}" />
+                    <TextBlock Text="开启后显示系统横幅；关闭后显示液态玻璃气泡。两种模式均保留到通知中心，气泡模式的系统记录静音且不弹横幅。"
+                               Style="{StaticResource SettingsHint}" />
+                    <ToggleSwitch Header="播放通知声音" IsOn="{x:Bind ViewModel.PlaySound, Mode=TwoWay}" />
+                </StackPanel>
+            </Border>
+
+            <ContentControl x:Name="BubbleSettings" IsEnabled="{x:Bind ViewModel.UseCustomBubble, Mode=OneWay}"
+                            HorizontalContentAlignment="Stretch">
+            <StackPanel Spacing="12">
+                <TextBlock Text="气泡布局" Style="{StaticResource SettingsSection}" />
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel Spacing="8">
+                        <Grid ColumnSpacing="16" Margin="0,0,0,16">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <ComboBox Header="停靠位置" HorizontalAlignment="Stretch"
+                                      SelectedIndex="{x:Bind ViewModel.PositionIndex, Mode=TwoWay}">
+                                <ComboBoxItem Content="右上角" /><ComboBoxItem Content="左上角" />
+                                <ComboBoxItem Content="右下角" /><ComboBoxItem Content="左下角" />
+                            </ComboBox>
+                            <ComboBox Grid.Column="1" Header="显示器" HorizontalAlignment="Stretch"
+                                      SelectedIndex="{x:Bind ViewModel.MonitorIndex, Mode=TwoWay}">
+                                <ComboBoxItem Content="主屏幕" /><ComboBoxItem Content="鼠标所在屏幕" />
+                            </ComboBox>
+                        </Grid>
+                        <c:SliderRow x:Name="WidthSlider" Label="气泡宽度" Min="260" Max="800" Step="2" Suffix=" px"
+                                     Value="{x:Bind ViewModel.Width, Mode=TwoWay}" />
+                        <c:SliderRow Label="停留时间" Min="800" Max="60000" Step="100" Suffix=" ms"
+                                     Hint="鼠标悬停时暂停自动关闭。" Value="{x:Bind ViewModel.DurationMs, Mode=TwoWay}" />
+                        <c:SliderRow Label="最多同时显示" Min="1" Max="12" Step="1" Suffix=" 条"
+                                     Value="{x:Bind ViewModel.MaxVisible, Mode=TwoWay}" />
+                        <c:SliderRow Label="气泡间距" Min="0" Max="60" Step="1" Suffix=" px"
+                                     Value="{x:Bind ViewModel.Spacing, Mode=TwoWay}" />
+                        <c:SliderRow Label="屏幕水平边距" Min="0" Max="400" Step="2" Suffix=" px"
+                                     Value="{x:Bind ViewModel.MarginX, Mode=TwoWay}" />
+                        <c:SliderRow Label="屏幕垂直边距" Min="0" Max="400" Step="2" Suffix=" px"
+                                     Value="{x:Bind ViewModel.MarginY, Mode=TwoWay}" />
+                        <c:SliderRow Label="正文最多行数" Min="1" Max="10" Step="1" Suffix=" 行"
+                                     Value="{x:Bind ViewModel.MaxBodyLines, Mode=TwoWay}" />
+                    </StackPanel>
+                </Border>
+                <TextBlock Text="玻璃材质" Style="{StaticResource SettingsSection}" />
+                <Border Style="{StaticResource SettingsCard}">
+                    <StackPanel Spacing="16">
+                        <ToggleSwitch Header="液态玻璃材质" IsOn="{x:Bind ViewModel.GlassBackdrop, Mode=TwoWay}" />
+                        <ToggleSwitch Header="背景实时跟随" IsOn="{x:Bind ViewModel.DynamicBackdrop, Mode=TwoWay}" />
+                        <TextBlock Text="实时采样桌面背景并应用原版折射、色散和边缘高光。实时跟随开启时，气泡不出现在截图和录屏中。"
+                                   Style="{StaticResource SettingsHint}" />
+                        <c:SliderRow Label="背景重采间隔" Min="40" Max="2000" Step="10" Suffix=" ms"
+                                     Value="{x:Bind ViewModel.BackdropRefreshMs, Mode=TwoWay}" />
+                        <c:SliderRow Label="纯色背景不透明度" Min="0.3" Max="1" Step="0.01" Format="0.00"
+                                     Hint="仅在关闭液态玻璃材质时使用。" Value="{x:Bind ViewModel.BackgroundOpacity, Mode=TwoWay}" />
+                        <c:SliderRow Label="圆角" Min="0" Max="32" Step="1" Suffix=" px"
+                                     Value="{x:Bind ViewModel.CornerRadius, Mode=TwoWay}" />
+                        <c:SliderRow Label="阴影强度" Min="0" Max="4" Step="0.05" Format="0.00"
+                                     Hint="1.0 保留原版的两层柔和投影。" Value="{x:Bind ViewModel.ShadowElevation, Mode=TwoWay}" />
+                        <ComboBox Header="纯色气泡主题" SelectedIndex="{x:Bind ViewModel.ThemeIndex, Mode=TwoWay}" MinWidth="180">
+                            <ComboBoxItem Content="深色" /><ComboBoxItem Content="浅色" />
+                        </ComboBox>
+                        <ToggleSwitch Header="显示微信图标" IsOn="{x:Bind ViewModel.ShowAvatar, Mode=TwoWay}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+            </ContentControl>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

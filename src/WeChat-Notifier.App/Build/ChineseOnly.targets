@@ -1,0 +1,40 @@
+<Project>
+  <!-- SatelliteResourceLanguages 只处理托管卫星程序集，WinUI 的原生 MUI 必须单独筛选。 -->
+  <Target Name="KeepSimplifiedChineseMui"
+          AfterTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents"
+          BeforeTargets="AssignTargetPaths">
+    <ItemGroup>
+      <None Remove="@(None)"
+            Condition="'%(None.Extension)' == '.mui' and !$([System.String]::Copy('%(None.Identity)').ToLowerInvariant().Contains('\zh-cn\'))" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
+            Condition="'%(ReferenceCopyLocalPaths.Extension)' == '.mui' and !$([System.String]::Copy('%(ReferenceCopyLocalPaths.Identity)').ToLowerInvariant().Contains('\zh-cn\'))" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="KeepSimplifiedChinesePublishResources" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+            Condition="'%(ResolvedFileToPublish.Extension)' == '.mui' and !$([System.String]::Copy('%(ResolvedFileToPublish.Identity)').ToLowerInvariant().Contains('\zh-cn\'))" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="KeepSimplifiedChinesePri"
+          BeforeTargets="AssignTargetPaths"
+          DependsOnTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <_ChinesePriInput Include="@(ReferenceCopyLocalPaths)"
+            Condition="'%(ReferenceCopyLocalPaths.Extension)' == '.pri' and '%(ReferenceCopyLocalPaths.Filename)' != '$(AssemblyName)'" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_ChineseMakePri>$([System.IO.Path]::Combine('$(WindowsSDKBuildToolsBinVersionedFolder)', '$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant())', 'makepri.exe'))</_ChineseMakePri>
+    </PropertyGroup>
+    <Exec Condition="'@(_ChinesePriInput)' != ''"
+          Command="pwsh -NoProfile -File &quot;$(MSBuildThisFileDirectory)TrimPriLanguages.ps1&quot; -MakePriExe &quot;$(_ChineseMakePri)&quot; -InputFile &quot;%(_ChinesePriInput.FullPath)&quot; -OutputDirectory &quot;$(MSBuildProjectDirectory)\$(IntermediateOutputPath)ChinesePri&quot;" />
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Remove="@(_ChinesePriInput)" />
+      <ReferenceCopyLocalPaths Include="@(_ChinesePriInput->'$(IntermediateOutputPath)ChinesePri\%(Filename).pri')"
+                               CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+</Project>

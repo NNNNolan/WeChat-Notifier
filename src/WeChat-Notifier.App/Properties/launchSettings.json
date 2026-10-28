@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "WeChat-Notifier (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "WeChat-Notifier (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
