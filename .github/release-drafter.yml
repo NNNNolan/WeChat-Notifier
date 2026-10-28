@@ -132,12 +132,13 @@ template: |
 
   ## 下载
 
-  - 通用 Windows 安装程序：`WeChat-Notifier-Setup.exe`（自动选择 x64 或 ARM64）。
+  - Windows x64 安装程序：`WeChat-Notifier-Setup-x64.exe`。
+  - Windows ARM64 安装程序：`WeChat-Notifier-Setup-arm64.exe`。
   - Windows AOT x64：`WeChat-Notifier-win-x64-aot.zip`
   - Windows AOT ARM64：`WeChat-Notifier-win-arm64-aot.zip`
 
   ## 安装
 
-  - 安装版：双击 `WeChat-Notifier-Setup.exe`，按向导完成安装。
+  - 安装版：根据 Windows 架构下载对应的安装程序，双击后按向导完成安装。
   - 压缩包：下载与 Windows 架构对应的文件，解压后运行 `WeChat-Notifier.exe`。
   - 配置和日志保存在程序目录；安装版默认位于 `%LOCALAPPDATA%\Programs\WeChat-Notifier`。

@@ -57,7 +57,7 @@ src/WeChat-Notifier.App/
 ./build.ps1 -Aot                  # 原生 AOT；WinUI 依赖仍为多文件
 ```
 
-推送 `vMAJOR.MINOR.PATCH` tag 会触发 GitHub Actions，仅构建 Windows AOT x64 与 ARM64，并发布对应的便携压缩包和一个通用 Inno Setup 安装程序。安装程序会按 Windows 架构选择原生 AOT 文件，双击即可安装，不需要导入证书。
+推送 `vMAJOR.MINOR.PATCH` tag 会触发 GitHub Actions，仅构建 Windows AOT x64 与 ARM64，并发布对应的便携压缩包和架构专用 Inno Setup 安装程序：x64 使用 `WeChat-Notifier-Setup-x64.exe`，ARM64 使用 `WeChat-Notifier-Setup-arm64.exe`。双击对应的安装程序即可安装，不需要导入证书。
 
 自测入口为 `WeChat-Notifier.exe --selftest`，界面自动验证入口为 `--ui-smoke`。`--mode-smoke` 使用实际 EXE、热键和系统通知验证模式切换，并将结果写入 `Log/mode-smoke`。构建脚本不会把已有的 `Config/Log` 内容打进单文件压缩包。
 

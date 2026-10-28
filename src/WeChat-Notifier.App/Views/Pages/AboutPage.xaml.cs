@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media.Imaging;
 using System.Runtime.CompilerServices;
 using WeChat_Notifier.Configuration;
 using WeChat_Notifier.Infrastructure.Windows.Interop;
@@ -20,11 +21,17 @@ public sealed partial class AboutPage : Page
         InitializeComponent();
         BuildInfo.Text = $"v{ViewModel.Version} · WinUI 3 · {(RuntimeFeature.IsDynamicCodeSupported ? ".NET" : "Native AOT")}";
     }
-    private void OnOpenConfig(object sender, RoutedEventArgs e) => Open(AppPaths.ConfigFile);
-    private void OnOpenLog(object sender, RoutedEventArgs e) => Open(AppPaths.LogDirectory);
-    private void Open(string path)
+    private void OnOpenConfig(object sender, RoutedEventArgs e) => Open(AppPaths.ConfigFile, ShellOpen.File);
+    private void OnOpenLog(object sender, RoutedEventArgs e) => Open(AppPaths.LogDirectory, ShellOpen.Folder);
+    private void Open(string path, Action<string> open)
     {
-        try { ShellOpen.File(path); }
-        catch (Exception ex) { _window.ReportError("无法打开文件", ex.Message); }
+        try { open(path); }
+        catch (Exception ex) { _window.ReportError("无法打开路径", ex.Message); }
+    }
+
+    internal void CheckIcon()
+    {
+        if (ProductIcon.Source is not BitmapImage { PixelWidth: > 0, PixelHeight: > 0 })
+            throw new InvalidOperationException("关于页产品图标没有成功加载。");
     }
 }

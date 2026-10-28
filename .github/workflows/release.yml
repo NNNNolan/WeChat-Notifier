@@ -86,7 +86,7 @@ jobs:
               !(Select-String -LiteralPath $languageFile -Pattern '^\[Messages\]$' -Quiet)) {
               throw '下载的 Inno Setup 简体中文语言文件无效。'
           }
-      - name: Build universal Inno Setup installer
+      - name: Build architecture-specific Inno Setup installers
         shell: pwsh
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -109,12 +109,20 @@ jobs:
               $sourceDirs[$architecture] = $source
           }
           $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          & $compiler "/DAppVersion=$version" "/DX64SourceDir=$($sourceDirs['x64'])" `
-              "/DArm64SourceDir=$($sourceDirs['arm64'])" "/DOutputDir=$releaseAssets" `
-              'installer/WeChat-Notifier.iss'
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup 编译失败，ISCC 退出码 $LASTEXITCODE。" }
-          if (!(Test-Path -LiteralPath (Join-Path $releaseAssets 'WeChat-Notifier-Setup.exe') -PathType Leaf)) {
-              throw 'Inno Setup 编译未生成 WeChat-Notifier-Setup.exe。'
+          $setupTargets = @(
+              @{ Name = 'x64'; ArchitectureIdentifier = 'x64os' },
+              @{ Name = 'arm64'; ArchitectureIdentifier = 'arm64' }
+          )
+          foreach ($target in $setupTargets) {
+              & $compiler "/DAppVersion=$version" "/DAppArchitecture=$($target.Name)" `
+                  "/DArchitectureIdentifier=$($target.ArchitectureIdentifier)" `
+                  "/DPayloadDir=$($sourceDirs[$target.Name])" "/DOutputDir=$releaseAssets" `
+                  'installer/WeChat-Notifier.iss'
+              if ($LASTEXITCODE -ne 0) { throw "$($target.Name) Inno Setup 编译失败，ISCC 退出码 $LASTEXITCODE。" }
+              $installer = Join-Path $releaseAssets "WeChat-Notifier-Setup-$($target.Name).exe"
+              if (!(Test-Path -LiteralPath $installer -PathType Leaf)) {
+                  throw "Inno Setup 编译未生成 $($target.Name) 安装程序。"
+              }
           }
       - name: Publish Release Drafter notes
         uses: release-drafter/release-drafter@v7
@@ -132,7 +140,12 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $assets = @(Get-ChildItem release-assets -File | Where-Object Extension -In @('.zip', '.exe'))
-          $expected = @('WeChat-Notifier-win-x64-aot.zip', 'WeChat-Notifier-win-arm64-aot.zip', 'WeChat-Notifier-Setup.exe')
+          $expected = @(
+              'WeChat-Notifier-win-x64-aot.zip',
+              'WeChat-Notifier-win-arm64-aot.zip',
+              'WeChat-Notifier-Setup-x64.exe',
+              'WeChat-Notifier-Setup-arm64.exe'
+          )
           if ($assets.Count -ne $expected.Count -or (Compare-Object $expected $assets.Name)) {
               throw "发布资产不完整：$($assets.Name -join ', ')"
           }

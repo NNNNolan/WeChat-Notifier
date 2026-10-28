@@ -11,12 +11,12 @@ DefaultDirName={localappdata}\Programs\WeChat-Notifier
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-ArchitecturesAllowed=x64compatible or arm64
-ArchitecturesInstallIn64BitMode=x64compatible or arm64
+ArchitecturesAllowed={#ArchitectureIdentifier}
+ArchitecturesInstallIn64BitMode={#ArchitectureIdentifier}
 SetupIconFile=..\src\WeChat-Notifier.App\Assets\AppIcon.ico
 UninstallDisplayIcon={app}\WeChat-Notifier.exe
 OutputDir="{#OutputDir}"
-OutputBaseFilename=WeChat-Notifier-Setup
+OutputBaseFilename=WeChat-Notifier-Setup-{#AppArchitecture}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -28,8 +28,7 @@ Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式:"; Flags: unchecked
 
 [Files]
-Source: "{#X64SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: not IsArm64
-Source: "{#Arm64SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: IsArm64
+Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\打开设置"; Filename: "{app}\WeChat-Notifier.exe"; Parameters: "--settings"; WorkingDir: "{app}"

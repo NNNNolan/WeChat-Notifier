@@ -52,6 +52,7 @@ public partial class App : Microsoft.UI.Xaml.Application
             }
             _instance = new Mutex(true, @"Local\WeChatNotifier.WinUI." + (diagnostic ? Environment.ProcessId : "Main"), out _ownsMutex);
             if (!_ownsMutex) { Quit(); return; }
+            AutoStart.Migrate(config.AutoStart);
             _controller = new ApplicationController(config, DispatcherQueue.GetForCurrentThread());
             _controller.Start(listenForMessages: !flags.Contains("--mode-smoke"));
             if (!flags.Contains("--background") || flags.Contains("--settings") || flags.Contains("--shot-settings") || flags.Contains("--ui-smoke"))

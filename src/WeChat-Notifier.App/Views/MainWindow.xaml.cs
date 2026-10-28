@@ -222,6 +222,7 @@ public sealed partial class MainWindow : Window
         directory = Path.GetFullPath(directory);
         Directory.CreateDirectory(directory);
         await Task.Delay(600);
+        if (verify) VerifyTitleIcon();
         var names = new[] { "1-appearance", "2-behaviour", "3-hotkeys", "4-advanced", "5-about" };
         foreach (var theme in new[] { ElementTheme.Light, ElementTheme.Dark })
         {
@@ -244,6 +245,7 @@ public sealed partial class MainWindow : Window
                         case BehaviourPage behaviour: behaviour.CheckBindings(); break;
                         case HotkeysPage hotkeys: hotkeys.CheckBindings(); break;
                         case AdvancedPage advanced: advanced.CheckBindings(); break;
+                        case AboutPage about: about.CheckIcon(); break;
                     }
                     if (_viewModel.IsDirty) throw new InvalidOperationException("界面绑定初始化或还原操作修改了配置。");
                 }
