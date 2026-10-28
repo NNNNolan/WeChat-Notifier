@@ -42,27 +42,11 @@ jobs:
       - name: Build Native AOT package
         shell: pwsh
         run: ./build.ps1 -Architecture ${{ matrix.architecture }} -Aot
-      - name: Prepare MSIX input
-        shell: pwsh
-        env:
-          ARCHITECTURE: ${{ matrix.architecture }}
-        run: |
-          $output = "dist/win-${env:ARCHITECTURE}-aot"
-          Copy-Item src/WeChat-Notifier.App/Package.appxmanifest $output/Package.appxmanifest
-          New-Item -ItemType Directory -Path "$output/Assets" -Force | Out-Null
-          Copy-Item src/WeChat-Notifier.App/Assets/AppIcon.png "$output/Assets/AppIcon.png" -Force
       - name: Upload AOT archive
         uses: actions/upload-artifact@v7
         with:
           name: Aot-${{ matrix.architecture }}
           path: dist/WeChat-Notifier-win-${{ matrix.architecture }}-aot.zip
-          if-no-files-found: error
-          compression-level: 0
-      - name: Upload MSIX input
-        uses: actions/upload-artifact@v7
-        with:
-          name: MSIX-input-${{ matrix.architecture }}
-          path: dist/win-${{ matrix.architecture }}-aot
           if-no-files-found: error
           compression-level: 0
 
@@ -81,54 +65,42 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
-      - name: Download x64 MSIX input
-        uses: actions/download-artifact@v8
-        with:
-          name: MSIX-input-x64
-          path: msix/x64
-      - name: Download ARM64 MSIX input
-        uses: actions/download-artifact@v8
-        with:
-          name: MSIX-input-arm64
-          path: msix/arm64
-      - name: Set up WinAppCli
-        uses: microsoft/setup-WinAppCli@v0.2
-        with:
-          version: v0.7.1
-      - name: Package signed multi-architecture MSIX bundle
+      - name: Set up Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.7.1 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "安装 Inno Setup 失败，choco 退出码 $LASTEXITCODE。" }
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (!(Test-Path -LiteralPath $compiler)) { throw "找不到 Inno Setup 编译器：$compiler" }
+      - name: Build universal Inno Setup installer
         shell: pwsh
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           if ($env:RELEASE_TAG -notmatch '^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:[-+].*)?$') {
-              throw "MSIX 发布 tag 必须符合 vMAJOR.MINOR.PATCH：$env:RELEASE_TAG"
+              throw "发布 tag 必须符合 vMAJOR.MINOR.PATCH：$env:RELEASE_TAG"
           }
-          $version = "$($Matches.major).$($Matches.minor).$($Matches.patch).0"
-          $versionParts = $version.Split('.') | ForEach-Object { [int]$_ }
-          if ($versionParts | Where-Object { $_ -gt 65535 }) { throw "MSIX 版本号分段不能超过 65535：$version" }
+          $version = "$($Matches.major).$($Matches.minor).$($Matches.patch)"
+          $releaseAssets = (Resolve-Path -LiteralPath 'release-assets').Path
+          $sourceDirs = @{}
           foreach ($architecture in @('x64', 'arm64')) {
-              $manifest = "msix/$architecture/Package.appxmanifest"
-              if (!(Test-Path -LiteralPath $manifest)) { throw "缺少 $architecture MSIX manifest：$manifest" }
-              [xml]$document = Get-Content -LiteralPath $manifest -Raw
-              $identity = $document.SelectSingleNode("//*[local-name()='Identity']")
-              if (!$identity) { throw "MSIX manifest 缺少 Identity：$manifest" }
-              $identity.SetAttribute('Version', $version)
-              $document.Save((Resolve-Path -LiteralPath $manifest))
-              & winapp manifest update-assets "msix/$architecture/Assets/AppIcon.png" --manifest $manifest
-              if ($LASTEXITCODE -ne 0) { throw "生成 $architecture MSIX 图标资源失败，winapp 退出码 $LASTEXITCODE。" }
+              $archive = Join-Path $releaseAssets "WeChat-Notifier-win-$architecture-aot.zip"
+              if (!(Test-Path -LiteralPath $archive -PathType Leaf)) { throw "缺少 $architecture AOT 压缩包：$archive" }
+              $source = Join-Path $env:RUNNER_TEMP "WeChat-Notifier-$architecture"
+              New-Item -ItemType Directory -Path $source -Force | Out-Null
+              Expand-Archive -LiteralPath $archive -DestinationPath $source -Force
+              if (!(Test-Path -LiteralPath (Join-Path $source 'WeChat-Notifier.exe') -PathType Leaf)) {
+                  throw "$architecture AOT 压缩包缺少 WeChat-Notifier.exe。"
+              }
+              $sourceDirs[$architecture] = $source
           }
-          New-Item -ItemType Directory -Path release-assets -Force | Out-Null
-          $certificate = 'release-assets/WeChat-Notifier-signing.pfx'
-          $bundle = "release-assets/WeChat-Notifier-$env:RELEASE_TAG.msixbundle"
-          try {
-              & winapp cert generate --manifest msix/x64/Package.appxmanifest --output $certificate --export-cer
-              if ($LASTEXITCODE -ne 0) { throw "生成 MSIX 签名证书失败，winapp 退出码 $LASTEXITCODE。" }
-              # The AOT publish folders already include the Windows App SDK runtime.
-              & winapp pack msix/x64 msix/arm64 --cert $certificate --output $bundle
-              if ($LASTEXITCODE -ne 0) { throw "MSIX 打包失败，winapp 退出码 $LASTEXITCODE。" }
-          }
-          finally {
-              if (Test-Path -LiteralPath $certificate) { Remove-Item -LiteralPath $certificate -Force }
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          & $compiler "/DAppVersion=$version" "/DX64SourceDir=$($sourceDirs['x64'])" `
+              "/DArm64SourceDir=$($sourceDirs['arm64'])" "/DOutputDir=$releaseAssets" `
+              'installer/WeChat-Notifier.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup 编译失败，ISCC 退出码 $LASTEXITCODE。" }
+          if (!(Test-Path -LiteralPath (Join-Path $releaseAssets 'WeChat-Notifier-Setup.exe') -PathType Leaf)) {
+              throw 'Inno Setup 编译未生成 WeChat-Notifier-Setup.exe。'
           }
       - name: Publish Release Drafter notes
         uses: release-drafter/release-drafter@v7
@@ -145,9 +117,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $assets = @(Get-ChildItem release-assets -File | Where-Object Extension -In @('.zip', '.msixbundle', '.cer'))
-          $expected = @('WeChat-Notifier-win-x64-aot.zip', 'WeChat-Notifier-win-arm64-aot.zip')
-          if ($assets.Count -ne 4 -or (Compare-Object ($expected + @("WeChat-Notifier-$env:RELEASE_TAG.msixbundle", 'WeChat-Notifier-signing.cer')) $assets.Name)) {
+          $assets = @(Get-ChildItem release-assets -File | Where-Object Extension -In @('.zip', '.exe'))
+          $expected = @('WeChat-Notifier-win-x64-aot.zip', 'WeChat-Notifier-win-arm64-aot.zip', 'WeChat-Notifier-Setup.exe')
+          if ($assets.Count -ne $expected.Count -or (Compare-Object $expected $assets.Name)) {
               throw "发布资产不完整：$($assets.Name -join ', ')"
           }
           & gh release upload $env:RELEASE_TAG $assets.FullName --clobber

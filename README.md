@@ -10,7 +10,7 @@ WinUI 3 微信通知工具：简体中文界面、液态玻璃气泡或系统通
 
 ## 运行与配置
 
-- `Config/config.json`：便携压缩包位于真实 EXE 所在目录；MSIX 位于 `%LOCALAPPDATA%\Packages\<包族名>\LocalState\Config\config.json`，首次启动生成。
+- `Config/config.json`：便携压缩包和安装版都保存在程序目录，首次启动生成；安装版默认位于 `%LOCALAPPDATA%\Programs\WeChat-Notifier`。
 - `Log/app.log`：Serilog 日志位于同一数据根目录的 `Log` 文件夹；单个日志文件达到 2 MiB 时滚动，最多保留 14 个文件。
 - 关闭设置窗口只隐藏到托盘；托盘右键「退出」才停止程序。
 - 双击托盘图标调用已配置的微信快捷键打开微信；右键「设置…」打开 WeChat-Notifier 主界面。
@@ -24,7 +24,7 @@ WinUI 3 微信通知工具：简体中文界面、液态玻璃气泡或系统通
 - 默认同时按住 `Ctrl`、`Alt`、`,`、`.` 四个键（`Ctrl+Alt+,+.`），在正常、隐私、静默模式间循环切换，也可右键托盘，在模式二级菜单选择；一级菜单标题会显示当前模式。切换提示显示为不超过 1.5 秒的本地气泡，不写入 Windows 通知中心。快捷键设置支持点击输入框录制组合键，标点键松开后确认；Esc 取消，Backspace 清除并停用；保存后生效。已有自定义快捷键配置保持原值，可通过录制或恢复默认设置采用新组合。
 - 行为设置可将 EXE 加入隐私或静默名单。程序约每秒检测名单中的运行程序；静默模式优先于隐私模式，名单程序退出后恢复手动设置的模式。自动模式切换提示可以关闭；同一个 EXE 从一份名单移到另一份时会要求确认。修改保存后生效。
 
-单文件的临时解包目录只用于依赖和图标，不用于配置、日志。便携版运行目录不可写时会报错，不回退用户目录。旧用户目录的配置不会自动覆盖新配置，需要时自行复制到 `Config/config.json`。
+单文件的临时解包目录只用于依赖和图标，不用于配置、日志。便携版运行目录不可写时会报错，不回退用户目录；安装版默认安装到当前用户可写的目录。旧用户目录的配置不会自动覆盖新配置，需要时自行复制到 `Config/config.json`。
 
 ## 项目结构
 
@@ -57,11 +57,7 @@ src/WeChat-Notifier.App/
 ./build.ps1 -Aot                  # 原生 AOT；WinUI 依赖仍为多文件
 ```
 
-推送 `vMAJOR.MINOR.PATCH` tag 会触发 GitHub Actions，仅构建 Windows AOT x64 与 ARM64，并发布两个压缩包和一个包含两种架构的 MSIX bundle。MSIX 使用每次发布新生成的自签名证书；安装前需将随包发布的 `.cer` 导入“本地计算机\受信任的人”证书存储（需要管理员权限），每次更新都要先信任对应版本的证书：
-
-```powershell
-Import-Certificate -FilePath .\WeChat-Notifier-signing.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
-```
+推送 `vMAJOR.MINOR.PATCH` tag 会触发 GitHub Actions，仅构建 Windows AOT x64 与 ARM64，并发布对应的便携压缩包和一个通用 Inno Setup 安装程序。安装程序会按 Windows 架构选择原生 AOT 文件，双击即可安装，不需要导入证书。
 
 自测入口为 `WeChat-Notifier.exe --selftest`，界面自动验证入口为 `--ui-smoke`。`--mode-smoke` 使用实际 EXE、热键和系统通知验证模式切换，并将结果写入 `Log/mode-smoke`。构建脚本不会把已有的 `Config/Log` 内容打进单文件压缩包。
 

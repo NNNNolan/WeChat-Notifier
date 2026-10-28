@@ -132,12 +132,12 @@ template: |
 
   ## 下载
 
+  - 通用 Windows 安装程序：`WeChat-Notifier-Setup.exe`（自动选择 x64 或 ARM64）。
   - Windows AOT x64：`WeChat-Notifier-win-x64-aot.zip`
   - Windows AOT ARM64：`WeChat-Notifier-win-arm64-aot.zip`
-  - Windows MSIX bundle（x64 + ARM64）与对应的 `WeChat-Notifier-signing.cer`：见 Release 附件。
 
   ## 安装
 
+  - 安装版：双击 `WeChat-Notifier-Setup.exe`，按向导完成安装。
   - 压缩包：下载与 Windows 架构对应的文件，解压后运行 `WeChat-Notifier.exe`。
-  - MSIX：先将对应版本的 `.cer` 导入“本地计算机\受信任的人”，再安装 MSIX bundle；导入证书需要管理员权限。
-  - 配置和日志保存在便携版程序目录，MSIX 则保存在包的 `LocalState`。
+  - 配置和日志保存在程序目录；安装版默认位于 `%LOCALAPPDATA%\Programs\WeChat-Notifier`。
