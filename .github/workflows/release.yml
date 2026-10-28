@@ -72,6 +72,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "安装 Inno Setup 失败，choco 退出码 $LASTEXITCODE。" }
           $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (!(Test-Path -LiteralPath $compiler)) { throw "找不到 Inno Setup 编译器：$compiler" }
+      - name: Add Simplified Chinese installer language
+        shell: pwsh
+        run: |
+          # The Chocolatey installation may not include this optional translation file.
+          $languageDir = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\Languages'
+          New-Item -ItemType Directory -Path $languageDir -Force | Out-Null
+          $languageFile = Join-Path $languageDir 'ChineseSimplified.isl'
+          $languageUrl = 'https://raw.githubusercontent.com/jrsoftware/issrc/cfdf489/Files/Languages/ChineseSimplified.isl'
+          Invoke-WebRequest -Uri $languageUrl -OutFile $languageFile -ErrorAction Stop
+          if ((Get-Item -LiteralPath $languageFile).Length -lt 4096 -or
+              !(Select-String -LiteralPath $languageFile -Pattern '^\[LangOptions\]$' -Quiet) -or
+              !(Select-String -LiteralPath $languageFile -Pattern '^\[Messages\]$' -Quiet)) {
+              throw '下载的 Inno Setup 简体中文语言文件无效。'
+          }
       - name: Build universal Inno Setup installer
         shell: pwsh
         env:
