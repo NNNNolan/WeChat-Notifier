@@ -75,11 +75,11 @@ jobs:
       - name: Add Simplified Chinese installer language
         shell: pwsh
         run: |
-          # The Chocolatey installation may not include this optional translation file.
+          # Inno Setup 6.7.1 keeps this translation under its Unofficial directory.
           $languageDir = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\Languages'
           New-Item -ItemType Directory -Path $languageDir -Force | Out-Null
           $languageFile = Join-Path $languageDir 'ChineseSimplified.isl'
-          $languageUrl = 'https://raw.githubusercontent.com/jrsoftware/issrc/cfdf489/Files/Languages/ChineseSimplified.isl'
+          $languageUrl = 'https://raw.githubusercontent.com/jrsoftware/issrc/is-6_7_1/Files/Languages/Unofficial/ChineseSimplified.isl'
           Invoke-WebRequest -Uri $languageUrl -OutFile $languageFile -ErrorAction Stop
           if ((Get-Item -LiteralPath $languageFile).Length -lt 4096 -or
               !(Select-String -LiteralPath $languageFile -Pattern '^\[LangOptions\]$' -Quiet) -or
