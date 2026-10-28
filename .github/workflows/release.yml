@@ -23,7 +23,7 @@ jobs:
       - name: Update release draft
         uses: release-drafter/release-drafter@v7
         with:
-          config-name: file:.github/release-drafter.yml
+          config-name: file:release-drafter.yml
 
   package:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -133,7 +133,7 @@ jobs:
       - name: Publish Release Drafter notes
         uses: release-drafter/release-drafter@v7
         with:
-          config-name: file:.github/release-drafter.yml
+          config-name: file:release-drafter.yml
           name: WeChat-Notifier ${{ github.ref_name }}
           tag: ${{ github.ref_name }}
           publish: true
