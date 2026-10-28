@@ -117,7 +117,8 @@ jobs:
           try {
               & winapp cert generate --manifest msix/x64/Package.appxmanifest --output $certificate --export-cer
               if ($LASTEXITCODE -ne 0) { throw "生成 MSIX 签名证书失败，winapp 退出码 $LASTEXITCODE。" }
-              & winapp pack msix/x64 msix/arm64 --self-contained --cert $certificate --output $bundle
+              # The AOT publish folders already include the Windows App SDK runtime.
+              & winapp pack msix/x64 msix/arm64 --cert $certificate --output $bundle
               if ($LASTEXITCODE -ne 0) { throw "MSIX 打包失败，winapp 退出码 $LASTEXITCODE。" }
           }
           finally {
