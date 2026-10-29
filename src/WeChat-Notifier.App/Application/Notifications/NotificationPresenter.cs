@@ -23,12 +23,23 @@ internal sealed class NotificationPresenter(AppConfig config, ToastManager bubbl
         bool preview = false)
     {
         var plan = NotificationPresentation.Create(session, options, mode, suppressDisplay);
-        windows.Show(plan.Center, options, suppressDisplay: !plan.CenterBanner);
+        if (!preview && plan.Popup != null)
+        {
+            var popupTagKey = session.Key + (mode == NotificationMode.Privacy ? ":privacy-popup" : ":popup");
+            var existingCount = plan.WindowsPopup
+                ? windows.ExistingMessageCount(popupTagKey)
+                : bubbles.ExistingMessageCount(session.Key);
+            var updatedSession = NotificationContent.IncludeExistingCount(session, existingCount);
+            var popup = NotificationPresentation.Create(updatedSession, options, mode, suppressDisplay).Popup;
+            plan = plan with { Popup = popup };
+        }
+        windows.Show(plan.Center, options, suppressDisplay: true);
         if (plan.Popup == null) return;
         if (plan.WindowsPopup)
         {
-            // 短期泛化横幅与长期详细记录分开；详细内容从不进入横幅。
-            windows.Show(plan.Popup, options, tagKey: session.Key + ":privacy-popup",
+            // 短期弹窗与长期通知中心详情分开，合并条数只放在弹窗里。
+            var popupTag = session.Key + (mode == NotificationMode.Privacy ? ":privacy-popup" : ":popup");
+            windows.Show(plan.Popup, options, tagKey: popupTag,
                 expiresAfter: TimeSpan.FromSeconds(8));
         }
         else if (preview) bubbles.ShowPreview(options, plan.Popup);

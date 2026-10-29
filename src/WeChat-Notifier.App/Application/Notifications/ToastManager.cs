@@ -28,7 +28,22 @@ internal sealed class ToastManager : IDisposable
         LayoutConfig = config;
     }
 
-    public void Show(SessionInfo session) => Add(_config, session, false);
+    internal int ExistingMessageCount(string key) =>
+        _toasts.FirstOrDefault(toast => toast.CanUpdate(key))?.Session.NewMessageCount ?? 0;
+
+    public void Show(SessionInfo session)
+    {
+        var existing = _toasts.FirstOrDefault(toast => toast.CanUpdate(session.Key));
+        if (existing == null)
+        {
+            Add(_config, session, false);
+            return;
+        }
+
+        existing.UpdateSession(session);
+        Relayout(existing);
+        Changed?.Invoke();
+    }
 
     public void ShowStatus(string title, string body)
     {

@@ -1,5 +1,6 @@
 using Microsoft.Windows.AppLifecycle;
 using Microsoft.Windows.AppNotifications;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -98,7 +99,8 @@ public sealed class WindowsNotificationService : IDisposable
 
     internal static string BuildPayload(SessionInfo session, AppConfig options, bool suppressDisplay = false)
     {
-        var toast = new XElement("toast", new XAttribute("launch", "action=open"),
+        var launch = "action=open;messageCount=" + Math.Max(1, session.NewMessageCount).ToString(CultureInfo.InvariantCulture);
+        var toast = new XElement("toast", new XAttribute("launch", launch),
             new XElement("visual", new XElement("binding", new XAttribute("template", "ToastGeneric"),
                 new XElement("text", session.Title), new XElement("text", session.Preview))));
         if (!options.PlaySound || suppressDisplay) toast.Add(new XElement("audio", new XAttribute("silent", "true")));
@@ -119,6 +121,24 @@ public sealed class WindowsNotificationService : IDisposable
         return (await _manager!.GetAllAsync().AsTask().ConfigureAwait(false)).ToArray();
     }
 
+    internal int ExistingMessageCount(string tagKey)
+    {
+        var tag = TagFor(tagKey);
+        var existing = GetAllAsync().GetAwaiter().GetResult()
+            .FirstOrDefault(notification => notification.Group == Group && notification.Tag == tag);
+        if (existing == null) return 0;
+
+        var launch = (string?)XElement.Parse(existing.Payload).Attribute("launch");
+        var countField = launch?.Split(';').FirstOrDefault(part =>
+            part.StartsWith("messageCount=", StringComparison.Ordinal));
+        if (countField == null) return 1;
+
+        var countText = countField["messageCount=".Length..];
+        if (!int.TryParse(countText, NumberStyles.None, CultureInfo.InvariantCulture, out var count) || count < 1)
+            throw new InvalidDataException("通知中心中的消息数格式无效。");
+        return count;
+    }
+
     internal async Task RemoveByTagAndGroupAsync(string tag, string group)
     {
         EnsureRegistered();
@@ -130,6 +150,7 @@ public sealed class WindowsNotificationService : IDisposable
             .SelectMany(s => new[]
             {
                 TagFor(s.Username),
+                TagFor(s.Username + ":popup"),
                 TagFor(s.Username + ":privacy-popup"),
                 TagFor(s.Username + ":privacy-detail"),
                 TagFor(s.Username + ":silent")

@@ -145,7 +145,7 @@ internal static class ModeRuntimeChecks
             Check(XElement.Parse(detail.Payload).Descendants("text").Select(t => t.Value).Contains(session.Preview),
                 "实际通知中心保留详细消息");
             Check(!popup.Payload.Contains(session.Title) && !popup.Payload.Contains(session.Preview)
-                && popup.Payload.Contains("收到了一条消息"), "实际 Windows 隐私横幅内容不含详情");
+                && popup.Payload.Contains("收到了1条消息"), "实际 Windows 隐私横幅内容不含详情");
             var silentId = id + "-silent";
             controller.Presenter.Show(new SessionInfo { Key = silentId, Title = session.Title, Preview = session.Preview }, NotificationMode.Silent);
             notifications = await controller.WindowsNotifications.GetAllAsync();

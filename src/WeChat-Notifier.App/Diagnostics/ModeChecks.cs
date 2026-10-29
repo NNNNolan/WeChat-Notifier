@@ -68,14 +68,14 @@ internal static class ModeChecks
             var plan = NotificationPresentation.Create(detail, config, mode);
             Require(plan.Center.Title == detail.Title && plan.Center.Preview == detail.Preview, "通知中心丢失详细信息");
             if (mode == NotificationMode.Silent)
-                Require(plan.Popup == null && !plan.CenterBanner && !plan.BubbleSound, "静默模式仍有弹窗或声音");
+                Require(plan.Popup == null && !plan.BubbleSound, "静默模式仍有弹窗或声音");
             if (mode == NotificationMode.Privacy)
-                Require(plan.Popup?.Title == "微信新消息" && plan.Popup.Preview == "收到了一条消息"
-                    && !plan.CenterBanner && plan.WindowsPopup == system, "隐私弹窗泄露详情或错用了通知渠道");
+                Require(plan.Popup?.Title == "微信新消息" && plan.Popup.Preview == "收到了2条消息"
+                    && plan.WindowsPopup == system, "隐私弹窗泄露详情或错用了通知渠道");
             if (mode == NotificationMode.Normal)
-                Require(plan.CenterBanner == system && (system || plan.Popup == detail), "正常模式渠道错误");
+                Require(plan.WindowsPopup == system && plan.Popup == detail, "正常模式渠道错误");
             var quiet = NotificationPresentation.Create(detail, config, mode, true);
-            Require(quiet.Popup == null && !quiet.CenterBanner && !quiet.BubbleSound, "全屏抑制被模式绕过");
+            Require(quiet.Popup == null && !quiet.BubbleSound, "全屏抑制被模式绕过");
         }
         var original = WindowsNotificationService.CreateNotification(detail, new AppConfig { PlaySound = true });
         var retained = WindowsNotificationService.WithoutPopup(original);

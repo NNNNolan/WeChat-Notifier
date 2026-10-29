@@ -25,13 +25,16 @@ internal sealed class ToastWindow : IDisposable
     private long _enterAt, _moveAt, _exitAt;
     private bool _shown, _hovered, _menuOpen, _excluded, _closing, _disposed;
     private bool? _lightText;
-    public SessionInfo Session { get; }
+    public SessionInfo Session { get; private set; }
     public bool IsClosing => _closing;
     public int PhysicalWidth => _width + _pad * 2;
     public int PhysicalHeight => _height + _pad * 2;
     public event Action<ToastWindow>? Finished;
     public Action<SessionInfo>? ActivateRequested { get; set; }
     public Action<TimeSpan?>? SuppressNotificationsRequested { get; set; }
+
+    internal bool CanUpdate(string key) => !_pinned && !_transient && !_closing
+        && string.Equals(Session.Key, key, StringComparison.Ordinal);
 
     public ToastWindow(AppConfig config, SessionInfo session, DispatcherQueue dispatcher, double scale,
         bool pinned = false, bool transient = false)
@@ -53,6 +56,15 @@ internal sealed class ToastWindow : IDisposable
         _backdrop = dispatcher.CreateTimer();
         _backdrop.Tick += (_, _) => RefreshBackdrop();
         Resize();
+    }
+
+    internal void UpdateSession(SessionInfo session)
+    {
+        if (!CanUpdate(session.Key)) throw new InvalidOperationException("无法更新已关闭或非消息气泡。");
+        Session = session;
+        Resize();
+        _life.Stop();
+        ArmLife();
     }
 
     private void Resize()
