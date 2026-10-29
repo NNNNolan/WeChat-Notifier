@@ -11,6 +11,12 @@ internal static class NotificationContent
             ? (int)Math.Min(int.MaxValue, (long)existingCount + incoming)
             : incoming;
 
+        return WithCount(latest, count);
+    }
+
+    internal static SessionInfo WithCount(SessionInfo latest, int count)
+    {
+        count = Math.Max(1, count);
         return new SessionInfo
         {
             Key = latest.Key,

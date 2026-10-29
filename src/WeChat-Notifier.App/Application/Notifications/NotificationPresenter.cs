@@ -23,15 +23,22 @@ internal sealed class NotificationPresenter(AppConfig config, ToastManager bubbl
         bool preview = false)
     {
         var plan = NotificationPresentation.Create(session, options, mode, suppressDisplay);
-        if (!preview && plan.Popup != null)
+        if (!preview)
         {
-            var popupTagKey = session.Key + (mode == NotificationMode.Privacy ? ":privacy-popup" : ":popup");
-            var existingCount = plan.WindowsPopup
-                ? windows.ExistingMessageCount(popupTagKey)
-                : bubbles.ExistingMessageCount(session.Key);
-            var updatedSession = NotificationContent.IncludeExistingCount(session, existingCount);
-            var popup = NotificationPresentation.Create(updatedSession, options, mode, suppressDisplay).Popup;
-            plan = plan with { Popup = popup };
+            var centerCount = Math.Max(session.Unread, session.NewMessageCount);
+            var centerSession = NotificationContent.WithCount(session, centerCount);
+            var centerPlan = NotificationPresentation.Create(centerSession, options, mode, suppressDisplay);
+            if (plan.Popup != null)
+            {
+                var popupTagKey = session.Key + (mode == NotificationMode.Privacy ? ":privacy-popup" : ":popup");
+                var popupCount = plan.WindowsPopup
+                    ? windows.ExistingMessageCount(popupTagKey)
+                    : bubbles.ExistingMessageCount(session.Key);
+                var popupSession = NotificationContent.IncludeExistingCount(session, popupCount);
+                var popup = NotificationPresentation.Create(popupSession, options, mode, suppressDisplay).Popup;
+                centerPlan = centerPlan with { Popup = popup };
+            }
+            plan = centerPlan;
         }
         windows.Show(plan.Center, options, suppressDisplay: true);
         if (plan.Popup == null) return;
