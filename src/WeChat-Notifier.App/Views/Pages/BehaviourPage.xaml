@@ -38,6 +38,18 @@
                                Style="{StaticResource SettingsHint}" />
                 </StackPanel>
             </Border>
+            <TextBlock Text="托盘图标" Style="{StaticResource SettingsSection}" />
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel Spacing="10">
+                    <ToggleSwitch Header="有未读消息时持续闪烁"
+                                  IsOn="{x:Bind ViewModel.TrayFlashUntilRead, Mode=TwoWay}" />
+                    <TextBlock Text="默认持续闪烁，直到未读清零。关闭后按下方时长闪烁；收到新消息会重新计时。"
+                               Style="{StaticResource SettingsHint}" />
+                    <NumberBox Header="闪烁时长（秒）" Minimum="1" Maximum="300" SmallChange="1"
+                               Value="{x:Bind ViewModel.TrayFlashDurationSeconds, Mode=TwoWay}"
+                               IsEnabled="{x:Bind ViewModel.TrayFlashDurationEnabled, Mode=OneWay}" />
+                </StackPanel>
+            </Border>
             <TextBlock Text="应用程序模式名单" Style="{StaticResource SettingsSection}" />
             <Border Style="{StaticResource SettingsCard}">
                 <StackPanel Spacing="12">

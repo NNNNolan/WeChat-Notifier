@@ -187,7 +187,7 @@ public sealed class WeChatNotificationSource : IDisposable
     // Shared by the live poll loop and the regression check: one notification policy.
     internal void ProcessSessions(List<WeChatSession> current)
     {
-        Raise(SessionsUpdated, current.ToArray());
+        Raise(SessionsUpdated, current);
         if (Interlocked.Exchange(ref _resync, 0) != 0)
         {
             _previous.Clear();
@@ -213,8 +213,8 @@ public sealed class WeChatNotificationSource : IDisposable
             var body = s.Summary.Trim();
             if (body.Length == 0) body = "收到一条新消息";
             if (s.IsGroup && !string.IsNullOrWhiteSpace(s.LastSender)
-                && !body.StartsWith(s.LastSender + ":", StringComparison.Ordinal))
-                body = $"{s.LastSender}: {body}";
+                && !StartsWithSenderLabel(body, s.LastSender))
+                body = string.Concat(s.LastSender, ": ", body);
 
             Raise(MessageArrived, new SessionInfo
             {
@@ -255,6 +255,10 @@ public sealed class WeChatNotificationSource : IDisposable
 
     private static (int, long, string, string) Fingerprint(WeChatSession s) =>
         (s.Unread, s.LastTimestamp, s.Summary, s.LastSender);
+
+    private static bool StartsWithSenderLabel(string body, string sender) =>
+        body.StartsWith(sender, StringComparison.Ordinal)
+        && body.Length > sender.Length && body[sender.Length] == ':';
 
     private void SetConnected(bool connected)
     {

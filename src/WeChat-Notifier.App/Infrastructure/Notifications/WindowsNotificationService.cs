@@ -1,5 +1,7 @@
 using Microsoft.Windows.AppLifecycle;
 using Microsoft.Windows.AppNotifications;
+using System.Buffers;
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -17,6 +19,9 @@ namespace WeChat_Notifier.Infrastructure.Notifications;
 public sealed class WindowsNotificationService : IDisposable
 {
     private const string Group = "wechat";
+    private const int StackUtf8Limit = 512;
+    private static readonly string[] ReadNotificationTagSuffixes =
+        ["", ":popup", ":privacy-popup", ":privacy-detail", ":silent"];
     private AppNotificationManager? _manager;
     public event Action? Activated;
 
@@ -109,10 +114,26 @@ public sealed class WindowsNotificationService : IDisposable
 
     public async Task SynchronizeReadSessionsAsync(IReadOnlyList<WeChatSession> sessions)
     {
-        var read = ReadTagsForSessions(sessions);
         var notifications = await GetAllAsync().ConfigureAwait(false);
-        foreach (var tag in FindReadNotificationTags(notifications.Select(n => (n.Tag, n.Group)).ToArray(), read))
-            await RemoveByTagAndGroupAsync(tag, Group).ConfigureAwait(false);
+        if (notifications.Count == 0) return;
+
+        var existing = new Dictionary<ulong, string>();
+        foreach (var notification in notifications)
+        {
+            if (notification.Group == Group
+                && ulong.TryParse(notification.Tag, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var tag))
+                existing.TryAdd(tag, notification.Tag);
+        }
+
+        foreach (var session in sessions)
+        {
+            if (session.Unread != 0) continue;
+            foreach (var suffix in ReadNotificationTagSuffixes)
+            {
+                if (!existing.Remove(TagHash(session.Username, suffix), out var tag)) continue;
+                await RemoveByTagAndGroupAsync(tag, Group).ConfigureAwait(false);
+            }
+        }
     }
 
     internal async Task<IReadOnlyList<AppNotification>> GetAllAsync()
@@ -145,24 +166,67 @@ public sealed class WindowsNotificationService : IDisposable
         await _manager!.RemoveByTagAndGroupAsync(tag, group).AsTask().ConfigureAwait(false);
     }
 
-    internal static HashSet<string> ReadTagsForSessions(IReadOnlyList<WeChatSession> sessions) =>
-        sessions.Where(s => s.Unread == 0)
-            .SelectMany(s => new[]
-            {
-                TagFor(s.Username),
-                TagFor(s.Username + ":popup"),
-                TagFor(s.Username + ":privacy-popup"),
-                TagFor(s.Username + ":privacy-detail"),
-                TagFor(s.Username + ":silent")
-            })
-            .ToHashSet(StringComparer.Ordinal);
+    internal static HashSet<string> ReadTagsForSessions(IReadOnlyList<WeChatSession> sessions)
+    {
+        var tags = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var session in sessions)
+        {
+            if (session.Unread != 0) continue;
+            foreach (var suffix in ReadNotificationTagSuffixes)
+                tags.Add(TagFor(session.Username, suffix));
+        }
+        return tags;
+    }
 
     internal static IReadOnlyList<string> FindReadNotificationTags(
         IReadOnlyList<(string Tag, string Group)> notifications, IReadOnlySet<string> readTags) =>
         notifications.Where(n => n.Group == Group && readTags.Contains(n.Tag))
             .Select(n => n.Tag).Distinct(StringComparer.Ordinal).ToArray();
 
-    internal static string TagFor(string key) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..16];
+    internal static string TagFor(string key) => TagFor(key, string.Empty);
+
+    private static string TagFor(string key, string suffix)
+    {
+        Span<byte> hash = stackalloc byte[32];
+        HashTag(key, suffix, hash);
+        return Convert.ToHexString(hash[..8]);
+    }
+
+    private static ulong TagHash(string key, string suffix)
+    {
+        Span<byte> hash = stackalloc byte[32];
+        HashTag(key, suffix, hash);
+        return BinaryPrimitives.ReadUInt64BigEndian(hash);
+    }
+
+    private static void HashTag(string key, string suffix, Span<byte> hash)
+    {
+        var byteCount = checked(Encoding.UTF8.GetByteCount(key.AsSpan()) + Encoding.UTF8.GetByteCount(suffix.AsSpan()));
+        if (byteCount <= StackUtf8Limit)
+        {
+            Span<byte> input = stackalloc byte[byteCount];
+            ComputeTagHash(key, suffix, input, hash);
+            return;
+        }
+
+        var rented = ArrayPool<byte>.Shared.Rent(byteCount);
+        try
+        {
+            ComputeTagHash(key, suffix, rented.AsSpan(0, byteCount), hash);
+        }
+        finally
+        {
+            rented.AsSpan(0, byteCount).Clear();
+            ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    private static void ComputeTagHash(string key, string suffix, Span<byte> input, Span<byte> hash)
+    {
+        var written = Encoding.UTF8.GetBytes(key.AsSpan(), input);
+        Encoding.UTF8.GetBytes(suffix.AsSpan(), input[written..]);
+        SHA256.HashData(input, hash);
+    }
 
     private void OnInvoked(AppNotificationManager sender, AppNotificationActivatedEventArgs args) => Activated?.Invoke();
 

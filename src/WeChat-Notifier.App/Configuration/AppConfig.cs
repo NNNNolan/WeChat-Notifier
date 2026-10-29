@@ -32,6 +32,8 @@ public sealed class AppConfig
     public bool IncludeOfficialAccounts { get; set; }
     public bool SuppressForActiveChat { get; set; } = true;
     public bool SuppressWhenFullscreen { get; set; } = true;
+    public bool TrayFlashUntilRead { get; set; } = true;
+    public int TrayFlashDurationSeconds { get; set; } = 6;
     public List<string> SkipSessions { get; set; } = new();
     public List<string> SkipKeywords { get; set; } = new();
 

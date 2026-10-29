@@ -19,7 +19,8 @@ internal sealed class ToastWindow : IDisposable
     private readonly bool _pinned;
     private readonly bool _transient;
     private readonly bool _animations = new UISettings().AnimationsEnabled;
-    private byte[] _raw = [], _previous = [], _work = [], _glass = [], _pixels = [];
+    private byte[] _raw = [], _previous = [], _work = [], _flat = [], _pixels = [];
+    private bool _buffersUseGlassBackdrop;
     private double _scale, _top, _fromTop, _toTop;
     private int _left, _width, _height, _pad;
     private long _enterAt, _moveAt, _exitAt;
@@ -49,14 +50,18 @@ internal sealed class ToastWindow : IDisposable
         _window.MessageHandler = OnMessage;
         _life = dispatcher.CreateTimer();
         _life.IsRepeating = false;
-        _life.Tick += (_, _) => Finish();
+        _life.Tick += OnLifeTick;
         _motion = dispatcher.CreateTimer();
         _motion.Interval = TimeSpan.FromMilliseconds(15);
-        _motion.Tick += (_, _) => Animate();
+        _motion.Tick += OnMotionTick;
         _backdrop = dispatcher.CreateTimer();
-        _backdrop.Tick += (_, _) => RefreshBackdrop();
+        _backdrop.Tick += OnBackdropTick;
         Resize();
     }
+
+    private void OnLifeTick(DispatcherQueueTimer sender, object args) => Finish();
+    private void OnMotionTick(DispatcherQueueTimer sender, object args) => Animate();
+    private void OnBackdropTick(DispatcherQueueTimer sender, object args) => RefreshBackdrop();
 
     internal void UpdateSession(SessionInfo session)
     {
@@ -69,13 +74,38 @@ internal sealed class ToastWindow : IDisposable
 
     private void Resize()
     {
-        _width = (int)Math.Round(_config.Width * _scale);
-        _height = BubbleBitmap.Height(_config, Session, _scale);
-        _pad = (int)Math.Round(BubbleBitmap.ShadowPad * _scale);
-        _raw = new byte[_width * _height * 4];
-        _previous = new byte[_raw.Length];
-        _work = new byte[_raw.Length];
-        _glass = new byte[_raw.Length];
+        var width = (int)Math.Round(_config.Width * _scale);
+        var height = BubbleBitmap.Height(_config, Session, _scale);
+        var pad = (int)Math.Round(BubbleBitmap.ShadowPad * _scale);
+        var glassBackdrop = _config.GlassBackdrop;
+        if (_width == width && _height == height && _pad == pad && _buffersUseGlassBackdrop == glassBackdrop)
+            return;
+
+        var frameLength = checked(width * height * 4);
+        var outerLength = checked((width + pad * 2) * (height + pad * 2) * 4);
+        var dimensionsChanged = _width != width || _height != height || _pad != pad;
+        _width = width;
+        _height = height;
+        _pad = pad;
+
+        if (glassBackdrop)
+        {
+            if (dimensionsChanged || !_buffersUseGlassBackdrop)
+            {
+                _raw = new byte[frameLength];
+                _previous = new byte[frameLength];
+                _work = new byte[frameLength];
+            }
+            _flat = [];
+        }
+        else
+        {
+            _raw = _previous = _work = [];
+            if (dimensionsChanged || _flat.Length != frameLength) _flat = new byte[frameLength];
+        }
+
+        if (dimensionsChanged || _pixels.Length != outerLength) _pixels = new byte[outerLength];
+        _buffersUseGlassBackdrop = glassBackdrop;
     }
 
     public void Place(int left, int top, double scale, bool animate)
@@ -141,6 +171,7 @@ internal sealed class ToastWindow : IDisposable
             }
             finally { if (temporaryExclusion) SetCaptureExclusion(false); }
             if (!force && _raw.AsSpan().SequenceEqual(_previous)) return;
+            Buffer.BlockCopy(_raw, 0, _previous, 0, _raw.Length);
             var settings = new LiquidGlassRenderer.Settings
             {
                 Thickness = _config.GlassThickness, Blur = _config.GlassBlur,
@@ -150,19 +181,19 @@ internal sealed class ToastWindow : IDisposable
                 RefractScale = _config.GlassRefractScale, LightAngleDeg = _config.GlassLightAngle,
                 CornerRadiusDip = _config.CornerRadius, Dpr = _scale
             };
-            var luma = LiquidGlassRenderer.RenderInto(_raw, _work, _glass, _width, _height, settings);
+            var luma = LiquidGlassRenderer.RenderCapturedInPlace(_raw, _work, _width, _height, settings);
             _lightText = _lightText switch
             {
                 null => luma < 0.55, true when luma > 0.62 => false, false when luma < 0.48 => true, _ => _lightText
             };
-            Buffer.BlockCopy(_raw, 0, _previous, 0, _raw.Length);
         }
         else
         {
-            _glass = BubbleBitmap.Solid(_config, _width, _height, _scale);
+            BubbleBitmap.SolidInto(_config, _width, _height, _scale, _flat);
             _lightText = _config.Theme == "Dark";
         }
-        _pixels = BubbleBitmap.Compose(_config, Session, _scale, _glass, _width, _height, _lightText == true, _hovered);
+        BubbleBitmap.ComposeInto(_config, Session, _scale, _config.GlassBackdrop ? _raw : _flat, _width, _height,
+            _lightText == true, _hovered, _pixels);
     }
 
     private void ArmLife()
@@ -329,7 +360,13 @@ internal sealed class ToastWindow : IDisposable
         _life.Stop();
         _motion.Stop();
         _backdrop.Stop();
+        _life.Tick -= OnLifeTick;
+        _motion.Tick -= OnMotionTick;
+        _backdrop.Tick -= OnBackdropTick;
         _window.Dispose();
         Finished?.Invoke(this);
+        Finished = null;
+        ActivateRequested = null;
+        SuppressNotificationsRequested = null;
     }
 }

@@ -12,10 +12,10 @@ public static class AutoStart
 
     public static void Migrate(bool enabled)
     {
-        if (!HasLegacyRegistration()) return;
+        if (!HasOwnLegacyRegistration()) return;
 
         Set(enabled);
-        RemoveLegacyRegistration();
+        RemoveOwnLegacyRegistration();
     }
 
     public static void Set(bool enabled)
@@ -92,15 +92,34 @@ public static class AutoStart
     private static string PowerShellLiteral(string value) =>
         "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
 
-    private static bool HasLegacyRegistration()
+    private static bool HasOwnLegacyRegistration()
     {
         using var key = Registry.CurrentUser.OpenSubKey(LegacyRunKey);
-        return key?.GetValue(LegacyValueName) is not null;
+        return key?.GetValue(LegacyValueName) is string commandLine
+            && IsOwnLegacyCommand(commandLine);
     }
 
-    private static void RemoveLegacyRegistration()
+    private static void RemoveOwnLegacyRegistration()
     {
         using var key = Registry.CurrentUser.OpenSubKey(LegacyRunKey, writable: true);
-        key?.DeleteValue(LegacyValueName, throwOnMissingValue: false);
+        if (key?.GetValue(LegacyValueName) is string commandLine && IsOwnLegacyCommand(commandLine))
+            key.DeleteValue(LegacyValueName, throwOnMissingValue: false);
+    }
+
+    private static bool IsOwnLegacyCommand(string commandLine)
+    {
+        var executable = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(executable) || string.IsNullOrWhiteSpace(commandLine)) return false;
+
+        var value = commandLine.TrimStart();
+        if (value.StartsWith('"'))
+        {
+            var endQuote = value.IndexOf('"', 1);
+            return endQuote > 1
+                && string.Equals(value[1..endQuote], executable, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return value.StartsWith(executable, StringComparison.OrdinalIgnoreCase)
+            && (value.Length == executable.Length || char.IsWhiteSpace(value[executable.Length]));
     }
 }

@@ -11,10 +11,11 @@ namespace WeChat_Notifier.Infrastructure.Windows;
 internal sealed class TrayIcon : IDisposable
 {
     private readonly NativeWindow _window = new("WeChatNotifier.Tray");
+    private readonly AppConfig _config;
     private nint _icon;
     private readonly nint _blankIcon;
     private readonly DispatcherQueueTimer _flashTimer;
-    private int _flashSteps;
+    private long _flashUntilTick;
     private bool _iconVisible = true;
     private NotificationMode _mode = NotificationMode.Normal;
     private int _unreadCount;
@@ -32,12 +33,13 @@ internal sealed class TrayIcon : IDisposable
     internal NotificationMode Mode => _mode;
     internal string ModeMenuLabel => $"模式（当前：{_mode.DisplayName()}）";
 
-    public TrayIcon(DispatcherQueue dispatcher)
+    public TrayIcon(DispatcherQueue dispatcher, AppConfig config)
     {
+        _config = config;
         _icon = IconLoader.CreateTrayIcon(_mode, _unreadCount);
         _blankIcon = IconLoader.CreateBlankIcon();
         _flashTimer = dispatcher.CreateTimer();
-        _flashTimer.Interval = TimeSpan.FromMilliseconds(300);
+        _flashTimer.Interval = TimeSpan.FromMilliseconds(500);
         _flashTimer.Tick += (_, _) => FlashTick();
         _window.MessageHandler = OnMessage;
         var args = Environment.GetCommandLineArgs();
@@ -75,7 +77,6 @@ internal sealed class TrayIcon : IDisposable
     {
         if (_mode == mode) return;
         _mode = mode;
-        if (mode == NotificationMode.Silent) { _flashTimer.Stop(); _iconVisible = true; }
         ReplaceIcon();
     }
 
@@ -84,24 +85,53 @@ internal sealed class TrayIcon : IDisposable
         count = Math.Max(0, count);
         if (_unreadCount == count) return;
         _unreadCount = count;
-        if (count == 0) { _flashTimer.Stop(); _iconVisible = true; }
+        if (count == 0) StopFlashing();
+        else if (_config.TrayFlashUntilRead) StartFlashing();
         ReplaceIcon();
     }
 
-    public void Flash()
+    public void Flash() => StartFlashing();
+
+    internal void ApplyFlashSettings()
     {
-        _flashSteps = 8;
-        _iconVisible = false;
-        Update();
+        if (_unreadCount == 0)
+        {
+            StopFlashing();
+            return;
+        }
+
+        if (_config.TrayFlashUntilRead)
+        {
+            StartFlashing();
+            return;
+        }
+
+        if (_flashTimer.IsRunning && _flashUntilTick == long.MaxValue) StartFlashing();
+    }
+
+    private void StartFlashing()
+    {
+        if (_unreadCount == 0) return;
+        _flashUntilTick = _config.TrayFlashUntilRead
+            ? long.MaxValue
+            : Environment.TickCount64 + _config.TrayFlashDurationSeconds * 1000L;
+        if (_flashTimer.IsRunning) return;
+        _iconVisible = true;
         _flashTimer.Start();
+    }
+
+    private void StopFlashing()
+    {
+        _flashTimer.Stop();
+        _flashUntilTick = 0;
+        _iconVisible = true;
     }
 
     private void FlashTick()
     {
-        if (--_flashSteps <= 0)
+        if (_unreadCount == 0 || (!_config.TrayFlashUntilRead && Environment.TickCount64 >= _flashUntilTick))
         {
-            _iconVisible = true;
-            _flashTimer.Stop();
+            StopFlashing();
         }
         else _iconVisible = !_iconVisible;
         Update();

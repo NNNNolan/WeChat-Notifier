@@ -68,6 +68,8 @@ public static class ConfigStore
         target.IncludeOfficialAccounts = source.IncludeOfficialAccounts;
         target.SuppressForActiveChat = source.SuppressForActiveChat;
         target.SuppressWhenFullscreen = source.SuppressWhenFullscreen;
+        target.TrayFlashUntilRead = source.TrayFlashUntilRead;
+        target.TrayFlashDurationSeconds = source.TrayFlashDurationSeconds;
         target.SkipSessions = new List<string>(source.SkipSessions);
         target.SkipKeywords = new List<string>(source.SkipKeywords);
         target.WeChatHotkey = source.WeChatHotkey;
@@ -127,6 +129,7 @@ public static class ConfigStore
         Range(c.DurationMs, 800, 60000, nameof(c.DurationMs));
         Range(c.MaxVisible, 1, 12, nameof(c.MaxVisible));
         Range(c.PollIntervalMs, 150, 10000, nameof(c.PollIntervalMs));
+        Range(c.TrayFlashDurationSeconds, 1, 300, nameof(c.TrayFlashDurationSeconds));
         Range(c.CornerRadius, 0, 32, nameof(c.CornerRadius));
         Range(c.ShadowElevation, 0, 4, nameof(c.ShadowElevation));
         Range(c.BackdropRefreshMs, 40, 2000, nameof(c.BackdropRefreshMs));

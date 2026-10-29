@@ -38,7 +38,7 @@ internal sealed class ApplicationController : IDisposable
     {
         Config = config;
         _dispatcher = dispatcher;
-        _tray = new TrayIcon(dispatcher);
+        _tray = new TrayIcon(dispatcher, config);
         _wechat = new WeChatStateMonitor(dispatcher);
         _mode = new ApplicationModeController(config, dispatcher);
         _source = new WeChatNotificationSource(config, () => _wechat.IsRunning);
@@ -91,7 +91,7 @@ internal sealed class ApplicationController : IDisposable
                 if (disposition == NotificationDisposition.Ignore) return;
                 _unread.Arrived(session);
                 _tray.SetUnreadCount(_unread.Count);
-                if (_mode.Current != NotificationMode.Silent) _tray.Flash();
+                _tray.Flash();
                 _notifications.Show(session, _mode.Current, suppressDisplay: disposition == NotificationDisposition.Silent);
             }
             catch (Exception ex) { NotificationError("通知投递失败", ex); }
@@ -282,6 +282,7 @@ internal sealed class ApplicationController : IDisposable
     private void ApplyConfig()
     {
         Log.Verbose = Config.VerboseLog;
+        _tray.ApplyFlashSettings();
         _mode.Refresh();
         _notifications.ApplyMode(_mode.Current);
         _bubbles.DismissPreview();

@@ -10,6 +10,8 @@ internal sealed class DatabaseChangeMonitor : IDisposable
     private readonly AutoResetEvent _wake = new(false);
     private readonly HashSet<string> _paths = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<FileSystemWatcher> _watchers = [];
+    private WaitHandle[]? _waitHandles;
+    private CancellationToken _waitToken;
     private long? _firstChange;
     private long _lastChange, _lastCheck = Environment.TickCount64;
     private bool _immediate, _disposed;
@@ -48,7 +50,8 @@ internal sealed class DatabaseChangeMonitor : IDisposable
         catch { Dispose(); throw; }
     }
 
-    internal bool Matches(string path) => _paths.Contains(Path.GetFullPath(path));
+    internal bool Matches(string path) => _paths.Contains(
+        Path.IsPathFullyQualified(path) ? path : Path.GetFullPath(path));
     private void OnChange(object sender, FileSystemEventArgs args)
     {
         if (Matches(args.FullPath)) RequestCheck();
@@ -81,7 +84,16 @@ internal sealed class DatabaseChangeMonitor : IDisposable
 
     internal DatabaseWake? WaitForCheck(CancellationToken stop, int checkIntervalMs)
     {
-        var handles = new[] { stop.WaitHandle, _wake };
+        WaitHandle[] handles;
+        lock (_gate)
+        {
+            if (_waitHandles == null || _waitToken != stop)
+            {
+                _waitToken = stop;
+                _waitHandles = [stop.WaitHandle, _wake];
+            }
+            handles = _waitHandles;
+        }
         while (!stop.IsCancellationRequested)
         {
             int wait;

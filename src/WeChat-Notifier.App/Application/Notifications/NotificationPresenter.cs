@@ -10,10 +10,12 @@ internal sealed class NotificationPresenter(AppConfig config, ToastManager bubbl
 {
     public void ApplyMode(NotificationMode mode)
     {
-        windows.ValidateAvailable();
         // 模式变化时清除旧的详细气泡，避免隐私模式下旧内容继续显示。
         bubbles.ClearAll();
-        if (mode != NotificationMode.Normal) windows.SuppressPopups();
+        if (mode == NotificationMode.Normal) return;
+
+        windows.ValidateAvailable();
+        windows.SuppressPopups();
     }
 
     public void Show(SessionInfo session, NotificationMode mode, bool suppressDisplay = false) =>

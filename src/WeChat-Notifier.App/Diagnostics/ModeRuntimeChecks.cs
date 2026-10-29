@@ -117,12 +117,11 @@ internal static class ModeRuntimeChecks
             Check(config.NotificationMode == "Privacy", "恢复监听后四键组合可再次切换");
 
             controller.Tray.SetUnreadCount(12);
-            controller.Tray.Flash();
             Check(controller.Tray.IsFlashing && controller.Tray.UnreadCount == 12, "托盘实际更新角标并开始闪烁");
-            await WaitAsync(() => !controller.Tray.IsFlashing);
-            Check(true, "托盘闪烁结束恢复模式图标");
+            await Task.Delay(650);
+            Check(controller.Tray.IsFlashing && controller.Tray.UnreadCount == 12, "有未读时托盘持续闪烁");
             controller.Tray.SetUnreadCount(0);
-            Check(controller.Tray.UnreadCount == 0, "已读托盘角标清零");
+            Check(!controller.Tray.IsFlashing && controller.Tray.UnreadCount == 0, "已读后停止闪烁并清零角标");
 
             var id = "__mode_probe_" + Guid.NewGuid().ToString("N");
             var session = new SessionInfo { Key = id, Title = "回归详情标题", Preview = "仅允许通知中心看到的详细内容", Unread = 1, Time = "12:34" };

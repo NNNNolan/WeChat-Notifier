@@ -29,8 +29,10 @@ public static class LiquidGlassRenderer
     // render.glsl
     private static readonly double[] LumaWeights = { 0.299, 0.587, 0.114 };
 
-    public sealed class Settings
+    public struct Settings
     {
+        public Settings() { }
+
         public double Thickness = 30;            // logical px, mikcb: 30
         public double Blur = 3;                  // mikcb: 3
         public double RefractiveIndex = 1.59;    // mikcb: 1.59
@@ -70,11 +72,23 @@ public static class LiquidGlassRenderer
     /// </summary>
     public static double RenderInto(byte[] raw, byte[] work, byte[] dst, int w, int h, Settings s)
     {
+        return Render(raw, work, dst, w, h, s);
+    }
+
+    /// <summary>Renders over the captured frame after preserving it in the work buffer.</summary>
+    public static double RenderCapturedInPlace(byte[] buffer, byte[] work, int w, int h, Settings s)
+    {
+        return Render(buffer, work, buffer, w, h, s);
+    }
+
+    private static double Render(byte[] raw, byte[] work, byte[] dst, int w, int h, Settings s)
+    {
         if (w < 2 || h < 2 || raw.Length != checked(w * h * 4)
-            || work.Length != raw.Length || dst.Length != raw.Length)
+            || work.Length != raw.Length || dst.Length != raw.Length
+            || ReferenceEquals(raw, work) || ReferenceEquals(work, dst))
             throw new ArgumentException("玻璃渲染缓冲区尺寸无效。");
         Buffer.BlockCopy(raw, 0, work, 0, raw.Length);
-        BlurInPlace(work, w, h, s.Blur);   // the package frosts before the shader sees it
+        BlurInPlace(work, dst, w, h, s.Blur);   // RenderCore replaces this scratch buffer afterward.
         return RenderCore(work, dst, w, h, s);
     }
 
@@ -307,7 +321,7 @@ public static class LiquidGlassRenderer
     private static byte ClampByte(double v) => v <= 0 ? (byte)0 : (v >= 1 ? (byte)255 : (byte)(v * 255.0 + 0.5));
 
     /// <summary>Bilinear sample of the captured backdrop, edges clamped.</summary>
-    private static void Sample(byte[] src, int w, int h, double x, double y,
+    private static void Sample(ReadOnlySpan<byte> src, int w, int h, double x, double y,
         out double r, out double g, out double b)
     {
         var fx = Math.Clamp(x - 0.5, 0, w - 1.001);
@@ -324,22 +338,22 @@ public static class LiquidGlassRenderer
         var i01 = (y1 * w + x0) * 4;
         var i11 = (y1 * w + x1) * 4;
 
-        double Mix(int ch) =>
-            (src[i00 + ch] * (1 - tx) + src[i10 + ch] * tx) * (1 - ty) +
-            (src[i01 + ch] * (1 - tx) + src[i11 + ch] * tx) * ty;
-
-        b = Mix(0) / 255.0;
-        g = Mix(1) / 255.0;
-        r = Mix(2) / 255.0;
+        b = Mix(src, i00, i10, i01, i11, tx, ty, 0) / 255.0;
+        g = Mix(src, i00, i10, i01, i11, tx, ty, 1) / 255.0;
+        r = Mix(src, i00, i10, i01, i11, tx, ty, 2) / 255.0;
     }
 
+    private static double Mix(ReadOnlySpan<byte> src, int i00, int i10, int i01, int i11,
+        double tx, double ty, int channel) =>
+        (src[i00 + channel] * (1 - tx) + src[i10 + channel] * tx) * (1 - ty) +
+        (src[i01 + channel] * (1 - tx) + src[i11 + channel] * tx) * ty;
+
     /// <summary>Separable box blur standing in for Flutter's ImageFilter.blur sigma.</summary>
-    private static void BlurInPlace(byte[] px, int w, int h, double sigma)
+    private static void BlurInPlace(byte[] px, byte[] tmp, int w, int h, double sigma)
     {
         if (sigma <= 0.01) return;
         var radius = Math.Max(1, (int)Math.Round(sigma));
         var passes = 2;
-        var tmp = new byte[px.Length];
 
         for (var p = 0; p < passes; p++)
         {

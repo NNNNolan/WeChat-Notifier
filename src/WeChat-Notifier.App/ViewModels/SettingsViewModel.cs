@@ -353,6 +353,25 @@ public sealed partial class SettingsViewModel : INotifyPropertyChanged
         set => Set(_c.SuppressWhenFullscreen, value, v => _c.SuppressWhenFullscreen = v, nameof(SuppressWhenFullscreen));
     }
 
+    public bool TrayFlashUntilRead
+    {
+        get => _c.TrayFlashUntilRead;
+        set
+        {
+            if (Set(_c.TrayFlashUntilRead, value, v => _c.TrayFlashUntilRead = v, nameof(TrayFlashUntilRead)))
+                Raise(nameof(TrayFlashDurationEnabled));
+        }
+    }
+
+    public bool TrayFlashDurationEnabled => !_c.TrayFlashUntilRead;
+
+    public double TrayFlashDurationSeconds
+    {
+        get => _c.TrayFlashDurationSeconds;
+        set => Set((double)_c.TrayFlashDurationSeconds, value,
+            v => _c.TrayFlashDurationSeconds = (int)Math.Round(v), nameof(TrayFlashDurationSeconds));
+    }
+
     public bool WeChatHotkeyEnabled
     {
         get => _c.WeChatHotkeyEnabled;

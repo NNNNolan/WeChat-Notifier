@@ -25,6 +25,19 @@ internal static class BubbleBitmap
         var outerWidth = width + pad * 2;
         var outerHeight = height + pad * 2;
         var pixels = new byte[outerWidth * outerHeight * 4];
+        ComposeInto(config, session, scale, glass, width, height, lightText, hovered, pixels);
+        return pixels;
+    }
+
+    public static void ComposeInto(AppConfig config, SessionInfo session, double scale, byte[] glass,
+        int width, int height, bool lightText, bool hovered, byte[] pixels)
+    {
+        var pad = (int)Math.Round(ShadowPad * scale);
+        var outerWidth = width + pad * 2;
+        var outerHeight = height + pad * 2;
+        if (glass.Length != checked(width * height * 4) || pixels.Length != checked(outerWidth * outerHeight * 4))
+            throw new ArgumentException("气泡位图缓冲区尺寸无效。");
+        Array.Clear(pixels);
         var elevation = config.ShadowElevation;
         if (elevation > 0)
         {
@@ -80,12 +93,19 @@ internal static class BubbleBitmap
             GdiPlus.Line(graphics, closeX + 9 * s, closeY + 9 * s, closeX + 17 * s, closeY + 17 * s, 1.8f * s, 0xFFFFFFFF);
             GdiPlus.Line(graphics, closeX + 17 * s, closeY + 9 * s, closeX + 9 * s, closeY + 17 * s, 1.8f * s, 0xFFFFFFFF);
         });
-        return pixels;
     }
 
     public static byte[] Solid(AppConfig config, int width, int height, double scale)
     {
         var pixels = new byte[width * height * 4];
+        SolidInto(config, width, height, scale, pixels);
+        return pixels;
+    }
+
+    public static void SolidInto(AppConfig config, int width, int height, double scale, byte[] pixels)
+    {
+        if (pixels.Length != checked(width * height * 4))
+            throw new ArgumentException("气泡背景缓冲区尺寸无效。");
         var dark = config.Theme == "Dark";
         for (var y = 0; y < height; y++)
         for (var x = 0; x < width; x++)
@@ -98,7 +118,6 @@ internal static class BubbleBitmap
             pixels[index + 2] = (byte)((dark ? 27 : 250) * alpha);
             pixels[index + 3] = (byte)(255 * alpha);
         }
-        return pixels;
     }
 
     private static double Distance(double x, double y, double width, double height, double radius)
