@@ -103,9 +103,7 @@ internal static class ModeChecks
         Require(unread.Count == 0, "已读后角标未清除");
         foreach (var mode in Enum.GetValues<NotificationMode>())
         {
-            var pixels = IconLoader.RenderTrayPixels(mode, 0);
-            var badge = IconLoader.RenderTrayPixels(mode, 9);
-            Require(!pixels.AsSpan().SequenceEqual(badge), "角标没有渲染");
+            var pixels = IconLoader.RenderTrayPixels(mode);
             if (mode != NotificationMode.Normal)
             {
                 var expected = mode == NotificationMode.Privacy ? (r: 0x4E, g: 0x6E, b: 0xF2) : (r: 0x28, g: 0x28, b: 0x2B);

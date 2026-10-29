@@ -20,9 +20,6 @@
         </Grid.RowDefinitions>
 
         <TitleBar x:Name="AppTitleBar" Title="微信通知" Subtitle="WeChat-Notifier">
-            <TitleBar.IconSource>
-                <ImageIconSource ImageSource="ms-appx:///Assets/AppIcon.png" />
-            </TitleBar.IconSource>
         </TitleBar>
 
         <NavigationView x:Name="Navigation" Grid.Row="1"

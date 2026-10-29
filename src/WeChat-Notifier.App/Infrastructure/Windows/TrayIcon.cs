@@ -40,7 +40,8 @@ internal sealed class TrayIcon : IDisposable
         _flashTimer.Interval = TimeSpan.FromMilliseconds(300);
         _flashTimer.Tick += (_, _) => FlashTick();
         _window.MessageHandler = OnMessage;
-        Add();
+        var args = Environment.GetCommandLineArgs();
+        if (!args.Contains("--ui-smoke") && !args.Contains("--shot-settings")) Add();
     }
 
     private Native.NOTIFYICONDATA Data() => new()

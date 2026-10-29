@@ -74,7 +74,7 @@ public static class WeChatWindow
 
     public static IntPtr Find() => Find(GetPids());
 
-    internal static IntPtr Find(IReadOnlySet<uint> pids)
+    internal static IntPtr Find(IReadOnlySet<uint> pids, bool visibleOnly = false)
     {
         if (pids.Count == 0) return IntPtr.Zero;
 
@@ -87,6 +87,7 @@ public static class WeChatWindow
             Native.GetWindowThreadProcessId(h, out var pid);
             if (!pids.Contains(pid)) return true;
             if (!IsCandidateWindowClass(Native.GetClassNameOf(h))) return true;
+            if (visibleOnly && !Native.IsWindowVisible(h)) return true;
 
             var title = Native.GetWindowTitleOf(h);
             if (title is "微信" or "WeChat" or "Weixin")
@@ -123,15 +124,15 @@ public static class WeChatWindow
         return Native.GetForegroundWindow() == hwnd;
     }
 
-    internal static bool WaitForVisible(IntPtr hwnd, int timeoutMs)
+    internal static bool WaitForVisible(int timeoutMs)
     {
         var sw = Stopwatch.StartNew();
         while (sw.ElapsedMilliseconds < timeoutMs)
         {
-            if (Native.IsWindowVisible(hwnd)) return true;
+            if (Find(GetPids(), visibleOnly: true) != IntPtr.Zero) return true;
             Thread.Sleep(30);
         }
-        return Native.IsWindowVisible(hwnd);
+        return Find(GetPids(), visibleOnly: true) != IntPtr.Zero;
     }
 
     public static bool Activate(string? hotkey)
@@ -165,7 +166,7 @@ public static class WeChatWindow
                 if (!Keyboard.Chord(parsed.Modifiers, parsed.Key)) return false;
                 Log.Info($"sent {parsed.Display} to WeChat");
 
-                if (WaitForVisible(hwnd, 2000))
+                if (WaitForVisible(2000))
                 {
                     Log.Info("WeChat opened via its own hotkey");
                     return true;

@@ -35,6 +35,10 @@ public sealed partial class MainWindow : Window
         _controller = controller;
         _viewModel = new SettingsViewModel(controller.Config);
         InitializeComponent();
+        AppTitleBar.IconSource = new ImageIconSource
+        {
+            ImageSource = new BitmapImage(new Uri("ms-appx:///Assets/AppIcon.png"))
+        };
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));

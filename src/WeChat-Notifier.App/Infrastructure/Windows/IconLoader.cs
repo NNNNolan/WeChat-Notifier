@@ -1,6 +1,10 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Drawing.Text;
 using System.Runtime.InteropServices;
+using H.NotifyIcon;
 using WeChat_Notifier.Domain;
 using WeChat_Notifier.Infrastructure.Windows.Interop;
 
@@ -10,6 +14,7 @@ internal static class IconLoader
 {
     public static string ImagePath => Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
     private static string TrayPath => Path.Combine(AppContext.BaseDirectory, "Assets", "tray.ico");
+    private const int GeneratedTrayIconSize = 256;
 
     public static nint LoadTrayIcon(int size = 0)
     {
@@ -21,11 +26,67 @@ internal static class IconLoader
     }
 
     internal static nint CreateTrayIcon(NotificationMode mode, int unreadCount)
-        => GdiPlus.CreateIcon(RenderTrayPixels(mode, unreadCount), 32, 32);
-
-    internal static byte[] RenderTrayPixels(NotificationMode mode, int unreadCount)
     {
-        const int size = 32;
+        const int size = GeneratedTrayIconSize;
+        var pixels = RenderTrayPixels(mode, size);
+        if (unreadCount <= 0)
+            return GdiPlus.CreateIcon(pixels, size, size);
+
+        var label = unreadCount > 99 ? "99+" : unreadCount.ToString();
+        var badgeHeight = size * 0.66f;
+        var badgeWidth = size * (label.Length switch { 1 => 0.66f, 2 => 0.80f, _ => 0.90f });
+        var badgeLeft = size - badgeWidth;
+        var fontSize = label.Length switch { 1 => 80f, 2 => 68f, _ => 48f };
+
+        using var background = CreateBitmap(pixels, size);
+        using var badgeBrush = new SolidBrush(Color.FromArgb(0xE5, 0x48, 0x4D));
+        using var textBrush = new SolidBrush(Color.White);
+        using var font = new Font("Segoe UI", fontSize, FontStyle.Bold, GraphicsUnit.Point);
+        using var iconBitmap = SystemDrawingIconGenerator.Generate(
+            backgroundBrush: badgeBrush,
+            foregroundBrush: textBrush,
+            backgroundType: label.Length == 1 ? BackgroundType.Ellipse : BackgroundType.RoundedRectangle,
+            cornerRadius: badgeHeight / 2,
+            rectangle: new RectangleF(badgeLeft, 0, badgeWidth, badgeHeight),
+            baseImage: background,
+            size: size);
+        using (var graphics = Graphics.FromImage(iconBitmap))
+        using (var format = new StringFormat
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center,
+            FormatFlags = StringFormatFlags.NoWrap,
+            Trimming = StringTrimming.None
+        })
+        {
+            graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+            graphics.DrawString(label, font, textBrush,
+                new RectangleF(badgeLeft, 0, badgeWidth, badgeHeight), format);
+        }
+        return iconBitmap.GetHicon();
+    }
+
+    private static Bitmap CreateBitmap(byte[] pixels, int size)
+    {
+        var bitmap = new Bitmap(size, size, PixelFormat.Format32bppPArgb);
+        try
+        {
+            var rectangle = new Rectangle(0, 0, size, size);
+            var data = bitmap.LockBits(rectangle, ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
+            try { Marshal.Copy(pixels, 0, data.Scan0, pixels.Length); }
+            finally { bitmap.UnlockBits(data); }
+            return bitmap;
+        }
+        catch
+        {
+            bitmap.Dispose();
+            throw;
+        }
+    }
+
+    internal static byte[] RenderTrayPixels(NotificationMode mode, int size = 32)
+    {
+        if (size <= 0) throw new ArgumentOutOfRangeException(nameof(size));
         var pixels = new byte[size * size * 4];
         GdiPlus.Draw(pixels, size, size, graphics =>
             GdiPlus.Image(graphics, TrayPath, new(0, 0, size, size)));
@@ -46,16 +107,6 @@ internal static class IconLoader
             }
         }
 
-        if (unreadCount > 0)
-        {
-            var label = unreadCount > 99 ? "99+" : unreadCount.ToString();
-            GdiPlus.Draw(pixels, size, size, graphics =>
-            {
-                GdiPlus.Ellipse(graphics, new(17, 0, 15, 15), 0xFFE5484D);
-                GdiPlus.Text(graphics, label, new(17, 1, 15, 13), label.Length > 2 ? 6 : 8,
-                    true, 0xFFFFFFFF, true);
-            });
-        }
         return pixels;
     }
 
