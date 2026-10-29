@@ -60,7 +60,11 @@ internal static class ModeChecks
 
     internal static string? Privacy()
     {
-        var detail = new SessionInfo { Key = "private-chat", Title = "机密客户", Preview = "不能出现在横幅中的内容", Unread = 2, Time = "12:34" };
+        var detail = new SessionInfo
+        {
+            Key = "private-chat", Title = "机密客户", Preview = "不能出现在横幅中的内容",
+            Unread = 2, NewMessageCount = 2, Time = "12:34"
+        };
         foreach (var mode in Enum.GetValues<NotificationMode>())
         foreach (var system in new[] { false, true })
         {
